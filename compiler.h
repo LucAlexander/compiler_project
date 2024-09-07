@@ -83,17 +83,18 @@ typedef enum TOKEN_TYPES {
 	TOKEN_COMMENT,
 	TOKEN_MULTI_OPEN,
 	TOKEN_MULTI_CLOSE,
+	TOKEN_TYPE,
 	TOKEN_ALIAS,
 	TOKEN_MUTABLE,
 	TOKEN_EOF
-} TOKEN_TYPE;
+} TOKEN_TYPE_TAG;
 
 typedef struct token {
 	uint32_t line;
 	uint32_t col;
 	uint32_t len;
 	char string[TOKEN_MAX];
-	TOKEN_TYPE type;
+	TOKEN_TYPE_TAG type;
 } token;
 
 void show_token(const token* const tok);
@@ -128,7 +129,7 @@ uint8_t lex_float(const char* const string);
 uint32_t no_subtype(uint32_t type_index, char* const content);
 uint8_t issymbol(char c);
 
-struct alias_ast;
+struct new_type_ast;
 struct function_ast;
 struct expression_ast;
 struct binding_ast;
@@ -200,7 +201,7 @@ uint8_t type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose)
 typedef struct binding_ast{
 	type_ast type;
 	token name;
-} binding_ast, alias_ast;
+} binding_ast, new_type_ast;
 
 void show_binding(const binding_ast* const binding);
 
@@ -286,9 +287,9 @@ typedef struct expression_ast{
 
 void show_expression(const expression_ast* const expr, uint8_t indent);
 
-MAP_DEF(alias_ast)
+MAP_DEF(new_type_ast)
 
-void show_alias(const alias_ast* const alias);
+void show_new_type(const new_type_ast* const new_type);
 
 typedef struct function_ast{
 	type_ast type;
@@ -304,24 +305,24 @@ void show_function(const function_ast* const func);
 typedef struct ast{
 	token* import_v;
 	function_ast* func_v;
-	alias_ast* alias_v;
+	new_type_ast* new_type_v;
 	function_ast_map functions;
-	alias_ast_map types;
+	new_type_ast_map types;
 	uint32_t import_c;	
 	uint32_t func_c;
-	uint32_t alias_c;
+	uint32_t new_type_c;
 } ast;
 
 void show_ast(const ast* const tree);
 
 ast parse(FILE* fd, pool* const mem, char* err);
 uint8_t parse_import(ast* const tree, lexer* const lex, pool* const mem, char* err);
-type_ast parse_type(lexer* const lex, pool* const mem, char* err, token tok, TOKEN_TYPE end_token, uint8_t consume);
-alias_ast parse_alias(lexer* const lex, pool* const mem, char* err);
+type_ast parse_type(lexer* const lex, pool* const mem, char* err, token tok, TOKEN_TYPE_TAG end_token, uint8_t consume);
+new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err);
 function_ast parse_function(lexer* const lex, pool* const mem, token tok, char* err, uint8_t allowed_enclosing);
-expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE end_token, uint8_t* simple);
-expression_ast parse_application_expression(lexer* const lex, pool* const mem, token expr, char* err, TOKEN_TYPE end_token, uint8_t allow_block);
-expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE end_token, expression_ast first);
+expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t* simple);
+expression_ast parse_application_expression(lexer* const lex, pool* const mem, token expr, char* err, TOKEN_TYPE_TAG end_token, uint8_t allow_block);
+expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, expression_ast first);
 function_ast try_function(lexer* const lex, pool* const mem, token expr, char* err);
 expression_ast parse_if(lexer* const lex, pool* const mem, char* err);
 structure_ast parse_struct(lexer* const lex, pool* const mem, char* err);

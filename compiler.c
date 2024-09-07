@@ -19,7 +19,7 @@
 #define MAX_STRUCT_NESTING 8
 
 MAP_IMPL(function_ast)
-MAP_IMPL(alias_ast)
+MAP_IMPL(new_type_ast)
 
 token create_token(lexer* const lex){
 	uint32_t (*subtypes[TOKEN_TYPE_COUNT])(uint32_t, char* const) = {
@@ -208,7 +208,7 @@ uint32_t identifier_subtype(uint32_t type_index, char* const content){
 	if (strncmp(content, "i64", TOKEN_MAX) == 0){ return TOKEN_I64; }
 	if (strncmp(content, "f32", TOKEN_MAX) == 0){ return TOKEN_F32; }
 	if (strncmp(content, "f64", TOKEN_MAX) == 0){ return TOKEN_F64; }
-	if (strncmp(content, "alias", TOKEN_MAX) == 0){ return TOKEN_ALIAS; }
+	if (strncmp(content, "type", TOKEN_MAX) == 0){ return TOKEN_TYPE; }
 	if (strncmp(content, "mut", TOKEN_MAX) == 0){ return TOKEN_MUTABLE; }
 	if (strncmp(content, "ref", TOKEN_REF) == 0){ return TOKEN_REF; }
 	return type_index;
@@ -351,7 +351,7 @@ ast parse(FILE* fd, pool* const mem, char* err){
 	ast tree = {
 		.import_c = 0,
 		.functions = function_ast_map_init(mem),
-		.types = alias_ast_map_init(mem)
+		.types = new_type_ast_map_init(mem)
 	};
 	// parse imports
 	tree.import_v = pool_request(mem, sizeof(token)*MAX_IMPORTS);
@@ -375,27 +375,27 @@ ast parse(FILE* fd, pool* const mem, char* err){
 	}
 	// parse actual code
 	tree.func_v = pool_request(mem, sizeof(function_ast)*MAX_FUNCTIONS) - (sizeof(token)*(MAX_IMPORTS - tree.import_c));
-	tree.alias_v = pool_request(mem, sizeof(alias_ast)*MAX_ALIASES);
+	tree.new_type_v = pool_request(mem, sizeof(new_type_ast)*MAX_ALIASES);
 	tree.func_c = 0;
-	tree.alias_c = 0;
+	tree.new_type_c = 0;
 	while (1){
 		if (tok.type == TOKEN_EOF){
 			return tree;
 		}
-		if (tok.type == TOKEN_ALIAS){
-			alias_ast a = parse_alias(&lex, mem, err);
+		if (tok.type == TOKEN_TYPE){
+			new_type_ast a = parse_new_type(&lex, mem, err);
 			if (*err != 0){
 				return tree;
 			}
-			tree.alias_v[tree.alias_c] = a;
-			uint8_t collision = alias_ast_map_insert(&tree.types, tree.alias_v[tree.alias_c].name.string, &tree.alias_v[tree.alias_c]);
+			tree.new_type_v[tree.new_type_c] = a;
+			uint8_t collision = new_type_ast_map_insert(&tree.types, tree.new_type_v[tree.new_type_c].name.string, &tree.new_type_v[tree.new_type_c]);
 			if (collision == 1){
-				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined multiple times\n", tree.alias_v[tree.alias_c].name.string);
+				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined multiple times\n", tree.new_type_v[tree.new_type_c].name.string);
 			}
-			else if (function_ast_map_access(&tree.functions, tree.alias_v[tree.alias_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined prior as function\n", tree.alias_v[tree.alias_c].name.string);
+			else if (function_ast_map_access(&tree.functions, tree.new_type_v[tree.new_type_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined prior as function\n", tree.new_type_v[tree.new_type_c].name.string);
 			}
-			tree.alias_c += 1;
+			tree.new_type_c += 1;
 		}
 		else{
 			function_ast f = parse_function(&lex, mem, tok, err, 0);
@@ -407,8 +407,8 @@ ast parse(FILE* fd, pool* const mem, char* err){
 			if (collision == 1){
 				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined multiple times\n", tree.func_v[tree.func_c].name.string);
 			}
-			else if (alias_ast_map_access(&tree.types, tree.func_v[tree.func_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined prior as alias\n", tree.func_v[tree.func_c].name.string);
+			else if (new_type_ast_map_access(&tree.types, tree.func_v[tree.func_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined prior as new_type\n", tree.func_v[tree.func_c].name.string);
 			}
 			tree.func_c += 1;
 		}
@@ -500,7 +500,7 @@ structure_ast parse_struct(lexer* const lex, pool* const mem, char* err){
 	return outer;
 }
 
-type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TOKEN_TYPE end_token, uint8_t consume){
+type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TOKEN_TYPE_TAG end_token, uint8_t consume){
 	type_ast outer = (type_ast){
 		.tag=USER_TYPE,
 		.data.user=name,
@@ -639,17 +639,17 @@ type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TO
 	return (type_ast){.tag=NONE_TYPE};
 }
 
-alias_ast parse_alias(lexer* const lex, pool* const mem, char* err){
+new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err){
 	token name = parse_token(lex);
 	if (name.type != TOKEN_IDENTIFIER){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected identifier for type alias name, found '%s'\n", lex->line, lex->col, name.string);
-		return (alias_ast){};
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected identifier for type new_type name, found '%s'\n", lex->line, lex->col, name.string);
+		return (new_type_ast){};
 	}
 	type_ast type = parse_type(lex, mem, err, parse_token(lex), TOKEN_SEMI, 1);
 	if (*err != 0){
-		return (alias_ast){};
+		return (new_type_ast){};
 	}
-	return (alias_ast){
+	return (new_type_ast){
 		.type=type,
 		.name=name
 	};
@@ -685,7 +685,7 @@ function_ast parse_function(lexer* const lex, pool* const mem, token tok, char* 
 	};
 }
 
-expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE end_token, uint8_t* simple){
+expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t* simple){
 	expression_ast outer = {
 		.tag=LAMBDA_EXPRESSION,
 		.data.lambda={
@@ -828,7 +828,7 @@ function_ast try_function(lexer* const lex, pool* const mem, token expr, char* e
 	return func;
 }
 
-expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE end_token, expression_ast first){
+expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, expression_ast first){
 	expression_ast outer = {
 		.tag=BLOCK_EXPRESSION,
 		.data.block.type={.tag=NONE_TYPE},
@@ -855,7 +855,7 @@ expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* e
 	return outer;
 }
 
-expression_ast parse_application_expression(lexer* const lex, pool* const mem, token expr, char* err, TOKEN_TYPE end_token, uint8_t allow_block){
+expression_ast parse_application_expression(lexer* const lex, pool* const mem, token expr, char* err, TOKEN_TYPE_TAG end_token, uint8_t allow_block){
 	expression_ast outer = {
 		.tag=APPLICATION_EXPRESSION,
 		.data.block.type={.tag=NONE_TYPE},
@@ -1385,7 +1385,7 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 		}
 	}
 
-//TODO types vs aliases
+//TODO types vs new_typees
 //TODO parametric types
 //TODO add constants, parametric constant buffer sizes
 //TODO revisit statement/statement expressions/branching/conditionals
@@ -1607,12 +1607,12 @@ type_ast roll_expression(
 			return expr->data.binding.type;
 		}
 		if (expected_type.tag == USER_TYPE){
-			alias_ast* primitive_alias = alias_ast_map_access(&tree->types, expected_type.data.user.string);
-			if (primitive_alias == NULL){
+			new_type_ast* primitive_new_type = new_type_ast_map_access(&tree->types, expected_type.data.user.string);
+			if (primitive_new_type == NULL){
 				snprintf(err, ERROR_BUFFER, " [!] Unknown user primitive\n");
 				return expected_type;
 			}
-			if (type_cmp(&primitive_alias->type, &expr->data.binding.type, FOR_APPLICATION) != 0){
+			if (type_cmp(&primitive_new_type->type, &expr->data.binding.type, FOR_APPLICATION) != 0){
 				snprintf(err, ERROR_BUFFER, " [!] Expected user primitive did not match literal primitive value\n");
 				return expected_type;
 			}
@@ -1712,7 +1712,7 @@ type_ast roll_expression(
 				target_struct = d_full_type.data.pointer->data.structure;
 				break;
 			case USER_TYPE:
-				alias_ast* referenced = alias_ast_map_access(&tree->types, d_full_type.data.pointer->data.user.string);
+				new_type_ast* referenced = new_type_ast_map_access(&tree->types, d_full_type.data.pointer->data.user.string);
 				if (referenced == NULL){
 					snprintf(err, ERROR_BUFFER, " [!] Cannot dereference unknown user type\n");
 					return d_full_type;
@@ -1772,12 +1772,12 @@ type_ast roll_expression(
 					target_struct = *access_full_type.data.structure;
 				}
 				else if (access_full_type.tag == USER_TYPE){
-					alias_ast* alias_lookup = alias_ast_map_access(&tree->types, access_full_type.data.user.string);
-					if (alias_lookup == NULL){
+					new_type_ast* new_type_lookup = new_type_ast_map_access(&tree->types, access_full_type.data.user.string);
+					if (new_type_lookup == NULL){
 						snprintf(err, ERROR_BUFFER, " [!] Unknown user struct type '%s'\n", full_type.data.user.string);
 						return full_type;
 					}
-					type_ast* lookup = &alias_lookup->type;
+					type_ast* lookup = &new_type_lookup->type;
 					if (lookup->tag != STRUCT_TYPE){
 						snprintf(err, ERROR_BUFFER, " [!] Target binding for struct access does not resolve to structure\n");
 						return access_full_type;
@@ -1803,7 +1803,7 @@ type_ast roll_expression(
 						break;
 					}
 					else if (target_binding.type.tag == USER_TYPE){
-						alias_ast* nested_user_type = alias_ast_map_access(&tree->types, target_binding.type.data.user.string);
+						new_type_ast* nested_user_type = new_type_ast_map_access(&tree->types, target_binding.type.data.user.string);
 						if (nested_user_type == NULL){
 							snprintf(err, ERROR_BUFFER, " [!] Found non existant uesr type in structure access\n");
 							return access_full_type;
@@ -2236,12 +2236,12 @@ type_ast roll_literal_expression(
 		}
 		structure_ast target_struct;
 		if (expected_type.tag == USER_TYPE){
-			alias_ast* inner_alias = alias_ast_map_access(&tree->types, expected_type.data.user.string);
-			if (inner_alias == NULL){
+			new_type_ast* inner_new_type = new_type_ast_map_access(&tree->types, expected_type.data.user.string);
+			if (inner_new_type == NULL){
 				snprintf(err, ERROR_BUFFER, " [!] Struct literal cannot be created for user defined type '%s'. No such type found\n", expected_type.data.user.string);
 				return expected_type;
 			}
-			type_ast* inner_struct_type = &inner_alias->type;
+			type_ast* inner_struct_type = &inner_new_type->type;
 			if (inner_struct_type->tag != STRUCT_TYPE){
 				snprintf(err, ERROR_BUFFER, " [!] Struct literal cannot be created for non struct type '%s'\n", expected_type.data.user.string);
 				return expected_type;
@@ -2442,9 +2442,9 @@ void show_ast(const ast* const tree){
 		printf("\n");
 	}
 	printf("\n");
-	for (size_t i = 0;i<tree->alias_c;++i){
-		printf("\033[1;33malias\033[0m ");
-		show_alias(&tree->alias_v[i]);
+	for (size_t i = 0;i<tree->new_type_c;++i){
+		printf("\033[1;33mtype\033[0m ");
+		show_new_type(&tree->new_type_v[i]);
 		printf("\n");
 	}
 	printf("\n");
@@ -2688,9 +2688,9 @@ void show_expression(const expression_ast* const expr, uint8_t indent){
 	}
 }
 
-void show_alias(const alias_ast* const alias){
-	show_type(&alias->type);
-	show_token(&alias->name);
+void show_new_type(const new_type_ast* const new_type){
+	show_type(&new_type->type);
+	show_token(&new_type->name);
 	printf("\n");
 }
 
