@@ -314,9 +314,24 @@ uint8_t lex_integer(const char* const string){
 	}
 	return 0;
 }
-
+//TODO neither of these support negatives lol, also This is not the full IEEE 754
 uint8_t lex_float(const char* const string){
-	return 1;//TODO
+	uint8_t dec = 0;
+	const char* c = string;
+	if (!isdigit(*c)){
+		return 1;
+	}
+	++c;
+	for (;*c != '\0';++c){
+		if (!isdigit(*c)){
+			if ((dec == 0) && (*c) == '.'){
+				dec = 1;
+				continue;
+			}
+			return 1;
+		}
+	}
+	return 0;
 }
 
 uint32_t no_subtype(uint32_t type_index, char* const content){
@@ -1012,8 +1027,25 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			}
 			break;
 		case TOKEN_FLOAT:
+			build.tag = VALUE_EXPRESSION;
+			build.data.binding.type=(type_ast){
+				.tag=PRIMITIVE_TYPE,
+				.data.primitive=FLOAT_ANY
+			};
+			build.data.binding.name=expr;
+			outer.data.block.expr_v[outer.data.block.expr_c] = build;
+			outer.data.block.expr_c += 1;
+			break;
 		case TOKEN_INTEGER:
 			build.tag = VALUE_EXPRESSION;
+			build.data.binding.type=(type_ast){
+				.tag=PRIMITIVE_TYPE,
+				.data.primitive=INT_ANY
+			};
+			build.data.binding.name=expr;
+			outer.data.block.expr_v[outer.data.block.expr_c] = build;
+			outer.data.block.expr_c += 1;
+			break;
 		case TOKEN_IDENTIFIER:
 			build.data.binding.type.tag=NONE_TYPE;
 			build.data.binding.name=expr;
@@ -1567,36 +1599,30 @@ type_ast roll_expression(
 		return expected_type;
 
 	case VALUE_EXPRESSION:
-		if (expr->data.binding.type.tag != NONE_TYPE){
+		if (expr->data.binding.type.tag == NONE_TYPE){
+			snprintf(err, ERROR_BUFFER, " [!] Untyped value expression encountered\n");
+			return expected_type;
+		}
+		if (expected_type.tag == NONE_TYPE){
 			return expr->data.binding.type;
 		}
-		type_ast expected_primitive = {
-			.tag=PRIMITIVE_TYPE,
-			.data.primitive=INT_ANY
-		};//TODO expand for float
-		if (expected_type.tag == NONE_TYPE){
-			expr->data.binding.type = expected_primitive;
-			return expected_primitive;
-		}
-		else if (expected_type.tag == USER_TYPE){
+		if (expected_type.tag == USER_TYPE){
 			alias_ast* primitive_alias = alias_ast_map_access(&tree->types, expected_type.data.user.string);
 			if (primitive_alias == NULL){
 				snprintf(err, ERROR_BUFFER, " [!] Unknown user primitive\n");
 				return expected_type;
 			}
-			if (type_cmp(&primitive_alias->type, &expected_primitive, FOR_APPLICATION) != 0){
+			if (type_cmp(&primitive_alias->type, &expr->data.binding.type, FOR_APPLICATION) != 0){
 				snprintf(err, ERROR_BUFFER, " [!] Expected user primitive did not match literal primitive value\n");
 				return expected_type;
 			}
 			expr->data.binding.type = expected_type;
 			return expected_type;
 		}
-		if (type_cmp(&expected_type, &expected_primitive, FOR_APPLICATION) != 0){
-			snprintf(err, ERROR_BUFFER, " [!] Unexpected primitive type\n");
-			return expected_type;
+		if (type_cmp(&expected_type, &expr->data.binding.type, FOR_APPLICATION) != 0){
+			snprintf(err, ERROR_BUFFER, " [!] Primitive type mismatch\n");
 		}
-		expr->data.binding.type = expected_type;
-		return expected_type;
+		return expr->data.binding.type;
 
 	case LITERAL_EXPRESSION:
 		return roll_literal_expression(roll, tree, mem, &expr->data.literal, expected_type, err);
@@ -1968,9 +1994,14 @@ uint8_t type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose)
 		return type_cmp(a->data.function.left, b->data.function.left, FOR_EQUALITY)
 			 + type_cmp(a->data.function.right, b->data.function.right, FOR_EQUALITY);
 	case PRIMITIVE_TYPE:
-		if ((a->data.primitive == INT_ANY) || (b->data.primitive == INT_ANY)){
+		PRIMITIVE_TAGS a_cast = a->data.primitive;
+		PRIMITIVE_TAGS b_cast = b->data.primitive;
+		if ((a_cast == INT_ANY && b_cast <= a_cast) || (b_cast == INT_ANY && a_cast <= b_cast)){
 			return 0;
-		}//TODO expand for float
+		}
+		if (a_cast > INT_ANY){
+			return 0;
+		}
 		return (a->data.primitive != b->data.primitive);//TODO this might need more nuance
 	case POINTER_TYPE:
 		return type_cmp(a->data.pointer, b->data.pointer, FOR_EQUALITY);

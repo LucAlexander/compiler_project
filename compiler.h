@@ -145,6 +145,21 @@ typedef struct structure_ast{
 uint8_t struct_cmp(structure_ast* const a, structure_ast* const b);
 void show_structure(const structure_ast* const structure, uint8_t indent);
 
+typedef enum PRIMITIVE_TAGS {
+	U8_TYPE=0,
+	U16_TYPE=1,
+	U32_TYPE=2,
+	U64_TYPE=3,
+	I8_TYPE=4,
+	I16_TYPE=5,
+	I32_TYPE=6,
+	I64_TYPE=7,
+	INT_ANY=8,
+	F32_TYPE=9,
+	F64_TYPE=10,
+	FLOAT_ANY=11
+} PRIMITIVE_TAGS;
+
 typedef struct type_ast{
 	enum {
 		FUNCTION_TYPE,
@@ -160,20 +175,7 @@ typedef struct type_ast{
 			struct type_ast* left;
 			struct type_ast* right;
 		} function;
-		enum {
-			U8_TYPE,
-			U16_TYPE,
-			U32_TYPE,
-			U64_TYPE,
-			I8_TYPE,
-			I16_TYPE,
-			I32_TYPE,
-			I64_TYPE,
-			INT_ANY,
-			F32_TYPE,
-			F64_TYPE,
-			FLOAT_ANY
-		} primitive;
+		PRIMITIVE_TAGS primitive;
 		struct type_ast* pointer;
 		structure_ast* structure;
 		token user;
