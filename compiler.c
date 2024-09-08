@@ -7,17 +7,6 @@
 #include "compiler.h"
 #include "pool.h"
 
-#define POOL_SIZE 0x1000000
-#define MAX_FUNCTIONS 10000
-#define MAX_ALIASES    1000
-#define MAX_IMPORTS     100
-#define MAX_ARGS 16
-#define BLOCK_MAX 256
-#define ERROR_BUFFER 512
-#define MAX_MEMBERS  256
-#define MAX_STACK_MEMBERS 10000
-#define MAX_STRUCT_NESTING 8
-
 MAP_IMPL(function_ast)
 MAP_IMPL(new_type_ast)
 MAP_IMPL(alias_ast)
@@ -1438,7 +1427,6 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 //TODO fix type equality
 //TODO syntax for enumerations
 //TODO char literals
-//TODO float literals and primitive f32, f64
 //TODO matches on enumerated struct union, maybe with @
 /* TODO semantic pass stuff
  * lift lambdas into closures
@@ -1546,9 +1534,14 @@ type_ast roll_expression(
 			.type=desired,
 			.name=expr->data.closure.func->name
 		};
-		if (scope_contains(roll, &scope_item) != NULL){
+		//TODO maybe not if proper closure rather than standard assignment
+		uint8_t needs_capture = 0;
+		if (scope_contains(roll, &scope_item, &needs_capture) != NULL){
 			snprintf(err, ERROR_BUFFER, " [!] Binding with name '%s' already in scope\n", scope_item.name.string);
 			return expected_type;
+		}
+		if (needs_capture == 1){
+			push_capture_binding(roll, scope_item);
 		}
 		push_binding(roll, scope_item);
 		roll_expression(roll, tree, mem, equation, desired, 0, NULL, err);
@@ -1622,7 +1615,8 @@ type_ast roll_expression(
 		if (expr->data.binding.type.tag != NONE_TYPE){
 			return expr->data.binding.type;
 		}
-		type_ast* bound_type = scope_contains(roll, &expr->data.binding);
+		uint8_t needs_capturing = 0;
+		type_ast* bound_type = scope_contains(roll, &expr->data.binding, &needs_capturing);
 		if (bound_type == NULL){
 			function_ast* bound_function = function_ast_map_access(&tree->functions, expr->data.binding.name.string);
 			if (bound_function == NULL){
@@ -1630,6 +1624,9 @@ type_ast roll_expression(
 				return expected_type;
 			}
 			bound_type = &bound_function->type;
+		}
+		else if (needs_capturing == 1){
+			push_capture_binding(roll, expr->data.binding);
 		}
 		if (expected_type.tag == NONE_TYPE){
 			expr->data.binding.type = *bound_type;
@@ -1896,6 +1893,7 @@ type_ast roll_expression(
 		if (expr->data.lambda.type.tag != NONE_TYPE){
 			return expr->data.lambda.type;
 		}
+		push_capture_frame(roll, mem);
 		push_frame(roll);
 		type_ast outer_copy = expected_type;
 		if (expected_type.tag != NONE_TYPE){
@@ -1904,13 +1902,14 @@ type_ast roll_expression(
 				type_ast declared_type = apply_type(&expected_type, err);
 				if (*err != 0){
 					pop_frame(roll);
+					pop_capture_frame(roll, NULL);
 					return declared_type;
 				}
 				binding_ast scope_item = {
 					.type=declared_type,
 					.name=candidate
 				};
-				if (scope_contains(roll, &scope_item) != NULL){
+				if (scope_contains(roll, &scope_item, NULL) != NULL){
 					snprintf(err, ERROR_BUFFER, " [!] Binding with name '%s' already in scope\n", scope_item.name.string);
 					return expected_type;
 				}
@@ -1918,6 +1917,7 @@ type_ast roll_expression(
 			}
 			type_ast constructed = roll_expression(roll, tree, mem, expr->data.lambda.expression, expected_type, 0, NULL, err);
 			pop_frame(roll);
+			pop_capture_frame(roll, NULL);
 			if (*err != 0){
 				return constructed;
 			}
@@ -1931,6 +1931,7 @@ type_ast roll_expression(
 		if (argc < expr->data.lambda.argc){
 			snprintf(err, ERROR_BUFFER, " [!] Too few arguments for lambda expression\n");
 			pop_frame(roll);
+			pop_capture_frame(roll, NULL);
 			return expected_type;
 		}
 		type_ast constructed;
@@ -1940,14 +1941,17 @@ type_ast roll_expression(
 			type_ast arg_type = roll_expression(roll, tree, mem, arg_expr, expected_type, 0, NULL, err);
 			if (*err != 0){
 				pop_frame(roll);
+				pop_capture_frame(roll, NULL);
 				return expected_type;
 			}
 			binding_ast scope_item = {
 				.type=arg_type,
 				.name=expr->data.lambda.argv[i]
 			};
-			if (scope_contains(roll, &scope_item) != NULL){
+			if (scope_contains(roll, &scope_item, NULL) != NULL){
 				snprintf(err, ERROR_BUFFER, " [!] Binding with name '%s' already in scope\n", scope_item.name.string);
+				pop_frame(roll);
+				pop_capture_frame(roll, NULL);
 				return expected_type;
 			}
 			push_binding(roll, scope_item);
@@ -1959,6 +1963,7 @@ type_ast roll_expression(
 		}
 		type_ast defin = roll_expression(roll, tree, mem, expr->data.lambda.expression, expected_type, 0, NULL, err);
 		pop_frame(roll);
+		pop_capture_frame(roll, NULL);
 		if (*err != 0){
 			return expected_type;
 		}
@@ -1999,6 +2004,43 @@ type_ast roll_expression(
 		snprintf(err, ERROR_BUFFER, " [!] Unexpected expression type\n");
 	}
 	return expected_type;
+}
+
+void push_capture_frame(scope* const roll, pool* const mem){
+	capture_stack* target = roll->captures;
+	roll->capture_frame += 1;
+	if (target->next != NULL){
+		target = target->next;
+		target->size = 0;
+		target->binding_count_point = roll->binding_count;
+		roll->captures = target;
+		return;
+	}
+	target->next = pool_request(mem, sizeof(capture_stack));
+	target = target->next;
+	target->prev = roll->captures;
+	target->next = NULL;
+	target->size = 0;
+	target->binding_count_point = roll->binding_count;
+	roll->captures = target;
+}
+
+uint16_t pop_capture_frame(scope* const roll, binding_ast** list_result){
+	if (list_result != NULL){
+		*list_result = roll->captures->binding_list;
+	}
+	uint16_t size = roll->captures->size;
+	roll->captures = roll->captures->prev;
+	return size;
+}
+
+void push_capture_binding(scope* const roll, binding_ast binding){
+	if (roll->captures->size >= MAX_CAPTURES){
+		fprintf(stderr, "Capture limit exceeded in stack frame\n");
+		return;
+	}
+	roll->captures->binding_list[roll->captures->size] = binding;
+	roll->captures->size += 1;
 }
 
 void reduce_aliases(ast* const tree, type_ast* left, type_ast* right){
@@ -2129,10 +2171,14 @@ uint8_t struct_cmp(structure_ast* const a, structure_ast* const b){
 	return 0;
 }
 
-type_ast* scope_contains(scope* const roll, binding_ast* const binding){
+type_ast* scope_contains(scope* const roll, binding_ast* const binding, uint8_t* needs_capturing){
 	for (uint16_t i = 0;i<roll->binding_count;++i){
 		uint16_t index = roll->binding_count - (i+1);
 		if (strcmp(roll->binding_stack[index].name.string, binding->name.string) == 0){
+			if ((needs_capturing != NULL)
+			 && (index >= roll->captures->binding_count_point)){
+				*needs_capturing = 1;
+			}
 			return &roll->binding_stack[index].type;
 		}
 	}
@@ -2439,7 +2485,15 @@ int compile_from_file(char* filename){
 		.binding_count=0,
 		.binding_capacity=MAX_STACK_MEMBERS,
 		.frame_count=0,
-		.frame_capacity=MAX_STACK_MEMBERS
+		.frame_capacity=MAX_STACK_MEMBERS,
+		.captures=pool_request(&mem, sizeof(capture_stack)),
+		.capture_frame=0
+	};
+	*roll.captures = (capture_stack){
+		.prev=NULL,
+		.next=NULL,
+		.size=0,
+		.binding_count_point=0
 	};
 	push_builtins(&roll, &mem);
 	transform_ast(&roll, &tree, &mem, err);

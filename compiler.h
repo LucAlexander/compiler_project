@@ -6,6 +6,18 @@
 
 #include "hashmap.h"
 
+#define POOL_SIZE 0x1000000
+#define MAX_FUNCTIONS 10000
+#define MAX_ALIASES    1000
+#define MAX_IMPORTS     100
+#define MAX_ARGS 16
+#define MAX_CAPTURES 256
+#define BLOCK_MAX 256
+#define ERROR_BUFFER 512
+#define MAX_MEMBERS  256
+#define MAX_STACK_MEMBERS 10000
+#define MAX_STRUCT_NESTING 8
+
 struct pool;
 typedef struct pool pool;
 
@@ -336,6 +348,14 @@ literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err);
 literal_ast parse_string_literal(lexer* const lex, pool* const mem, char* err);
 literal_ast parse_struct_literal(lexer* const lex, pool* const mem, char* err);
 
+typedef struct capture_stack {
+	struct capture_stack* prev;
+	struct capture_stack* next;
+	binding_ast binding_list[MAX_CAPTURES];
+	uint16_t size;
+	uint16_t binding_count_point;
+} capture_stack;
+
 typedef struct scope{
 	binding_ast* binding_stack;
 	uint16_t* frame_stack;
@@ -343,7 +363,13 @@ typedef struct scope{
 	uint16_t binding_capacity;
 	uint16_t frame_count;
 	uint16_t frame_capacity;
+	capture_stack* captures;
+	uint16_t capture_frame;
 }scope;
+
+void push_capture_frame(scope* const roll, pool* const mem);
+uint16_t pop_capture_frame(scope* const roll, binding_ast** list_result);
+void push_capture_binding(scope* const roll, binding_ast binding);
 
 void push_builtins(scope* const roll, pool* const mem);
 void push_frame(scope* const s);
@@ -352,7 +378,7 @@ void push_binding(scope* const s, binding_ast binding);
 void pop_binding(scope* const s);
 void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* err);
 type_ast roll_expression(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, type_ast expected_type, uint32_t argc, expression_ast* const argv, char* err);
-type_ast* scope_contains(scope* const roll, binding_ast* const binding);
+type_ast* scope_contains(scope* const roll, binding_ast* const binding, uint8_t* needs_capture);
 type_ast roll_statement_expression(scope* const roll, ast* const tree, pool* const mem, statement_ast* const statement, type_ast expected_type, uint8_t as_expression, char* err);
 type_ast roll_literal_expression(scope* const roll, ast* const tree, pool* const mem, literal_ast* const lit, type_ast expected_type, char* err);
 type_ast apply_type(type_ast* const func, char* err);
