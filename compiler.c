@@ -1430,7 +1430,6 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 		}
 	}
 
-//TODO types vs new_typees
 //TODO parametric types
 //TODO add constants, parametric constant buffer sizes
 //TODO revisit statement/statement expressions/branching/conditionals
@@ -1712,6 +1711,12 @@ type_ast roll_expression(
 		}
 		for (;d_index < location->data.block.expr_c;++d_index){
 			expression_ast* term = &location->data.block.expr_v[d_index];
+			if (d_full_type.tag == USER_TYPE){
+				d_full_type = resolve_type_or_alias(tree, d_full_type, err);
+				if (*err != 0){
+					return d_full_type;
+				}
+			}
 			if (d_full_type.tag != POINTER_TYPE && d_full_type.tag != BUFFER_TYPE){
 				type_ast left_type = apply_type(&d_full_type, err);
 				if (*err != 0){
@@ -1755,7 +1760,6 @@ type_ast roll_expression(
 				snprintf(err, ERROR_BUFFER, " [!] Expected a pointer to dereference, was neither pointer, buffer access, pointer buffer access, or struct member dereference\n");
 				return d_full_type;
 			}
-			structure_ast* target_struct = NULL;
 			type_ast matched_type = *d_full_type.data.pointer;
 			if (d_full_type.data.pointer->tag == USER_TYPE){
 				matched_type = resolve_type_or_alias(tree, *d_full_type.data.pointer, err);
@@ -1763,33 +1767,26 @@ type_ast roll_expression(
 					return d_full_type;
 				}
 			}
-			switch (matched_type.tag){
-			case STRUCT_TYPE:
-				target_struct = matched_type.data.structure;
-				type_ast accessed_type;
-				uint8_t found = 0;
-				for (uint32_t k = 0;k<target_struct->binding_c;++k){
-					binding_ast target_binding = target_struct->binding_v[k];
-					if (strncmp(term->data.binding.name.string, target_binding.name.string, TOKEN_MAX) == 0){
-						accessed_type = target_binding.type;
-						found = 1;
-						break;
-					}
-				}
-				if (found == 0){
-					snprintf(err, ERROR_BUFFER, " [!] No member found in dereferenced structure\n");
-					return d_full_type;
-				}
-				d_full_type = accessed_type;
-				break;
-			case POINTER_TYPE:
-				//TODO
-			case BUFFER_TYPE:
-				//TODO
-			default:
+			if (matched_type.tag != STRUCT_TYPE){
 				snprintf(err, ERROR_BUFFER, " [!] Expected structure to dereference member\n");
 				return d_full_type;
 			}
+			structure_ast* target_struct = matched_type.data.structure;
+			type_ast accessed_type;
+			uint8_t found = 0;
+			for (uint32_t k = 0;k<target_struct->binding_c;++k){
+				binding_ast target_binding = target_struct->binding_v[k];
+				if (strncmp(term->data.binding.name.string, target_binding.name.string, TOKEN_MAX) == 0){
+					accessed_type = target_binding.type;
+					found = 1;
+					break;
+				}
+			}
+			if (found == 0){
+				snprintf(err, ERROR_BUFFER, " [!] No member found in dereferenced structure\n");
+				return d_full_type;
+			}
+			d_full_type = accessed_type;
 		}
 		if (d_full_type.tag == POINTER_TYPE){
 			location->data.block.type = *d_full_type.data.pointer;
@@ -2029,7 +2026,6 @@ type_ast resolve_alias(ast* const tree, type_ast root, char* err){
 		new_type_ast* primitive_alias = alias_ast_map_access(&tree->aliases, root.data.user.string);
 		if (primitive_alias == NULL){
 			if (found == 0){
-				int hi = 1;
 				snprintf(err, ERROR_BUFFER, " [!] Unknown user type or alias\n");
 			}
 			return root;
