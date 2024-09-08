@@ -379,7 +379,7 @@ void pop_frame(scope* const s);
 void push_binding(scope* const s, binding_ast binding);
 void pop_binding(scope* const s);
 void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* err);
-type_ast roll_expression(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, type_ast expected_type, uint32_t argc, expression_ast* const argv, char* err);
+type_ast roll_expression(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, type_ast expected_type, uint32_t argc, expression_ast* const argv, uint8_t prevent_lift, char* err);
 type_ast* scope_contains(scope* const roll, binding_ast* const binding, uint8_t* needs_capture);
 type_ast roll_statement_expression(scope* const roll, ast* const tree, pool* const mem, statement_ast* const statement, type_ast expected_type, uint8_t as_expression, char* err);
 type_ast roll_literal_expression(scope* const roll, ast* const tree, pool* const mem, literal_ast* const lit, type_ast expected_type, char* err);

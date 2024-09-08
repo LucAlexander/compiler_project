@@ -1414,7 +1414,7 @@ void pop_binding(scope* const s){
 void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* err){
 	for (uint32_t i = 0;i<tree->func_c;++i){
 		function_ast* f = &tree->func_v[i];
-		roll_expression(roll, tree, mem, &f->expression, f->type, 0, NULL, err);
+		roll_expression(roll, tree, mem, &f->expression, f->type, 0, NULL, 1, err);
 		if (*err != 0){
 			return;
 		}
@@ -1430,10 +1430,9 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 //TODO char literals
 //TODO matches on enumerated struct union, maybe with @
 /* TODO semantic pass stuff
- * lift lambdas into closures
- * fill captures
  * group function application into distinct calls for defined top level functions
  * lift closures
+ * fill captures
 */
 }
 
@@ -1445,6 +1444,7 @@ type_ast roll_expression(
 	type_ast expected_type,
 	uint32_t argc,
 	expression_ast* const argv,
+	uint8_t prevent_lift,
 	char* err
 ){
 	type_ast infer = {
@@ -1488,7 +1488,7 @@ type_ast roll_expression(
 				}
 				line->data.block.type = statement_return;
 			}
-			roll_expression(roll, tree, mem, line, infer, 0, NULL, err);
+			roll_expression(roll, tree, mem, line, infer, 0, NULL, 0, err);
 			if (*err != 0){
 				pop_frame(roll);
 				return infer;
@@ -1501,12 +1501,12 @@ type_ast roll_expression(
 				snprintf(err, ERROR_BUFFER, " [!] Block expression expected return\n");
 				return expected_type;
 			}
-			roll_expression(roll, tree, mem, line, infer, 0, NULL, err);
+			roll_expression(roll, tree, mem, line, infer, 0, NULL, 0, err);
 			pop_frame(roll);
 			expr->data.block.type = expected_type;
 			return expected_type;
 		}
-		type_ast filled_type = roll_expression(roll, tree, mem, &line->data.block.expr_v[0], expected_type, 0, NULL, err);
+		type_ast filled_type = roll_expression(roll, tree, mem, &line->data.block.expr_v[0], expected_type, 0, NULL, 0, err);
 		pop_frame(roll);
 		if (*err != 0){
 			return filled_type;
@@ -1535,7 +1535,10 @@ type_ast roll_expression(
 			.type=desired,
 			.name=expr->data.closure.func->name
 		};
-		//TODO maybe not if proper closure rather than standard assignment
+		uint8_t prevent = 0;
+		if (equation->tag == LAMBDA_EXPRESSION){
+			prevent = 1;
+		}
 		uint8_t needs_capture = 0;
 		if (scope_contains(roll, &scope_item, &needs_capture) != NULL){
 			snprintf(err, ERROR_BUFFER, " [!] Binding with name '%s' already in scope\n", scope_item.name.string);
@@ -1545,7 +1548,7 @@ type_ast roll_expression(
 			push_capture_binding(roll, scope_item);
 		}
 		push_binding(roll, scope_item);
-		roll_expression(roll, tree, mem, equation, desired, 0, NULL, err);
+		roll_expression(roll, tree, mem, equation, desired, 0, NULL, prevent, err);
 		return expected_type;
 
 	case APPLICATION_EXPRESSION:
@@ -1553,7 +1556,7 @@ type_ast roll_expression(
 			return expr->data.block.type;
 		}
 		if (expr->data.block.expr_c == 1){
-			type_ast only = roll_expression(roll, tree, mem, &expr->data.block.expr_v[0], expected_type, 0, NULL, err);
+			type_ast only = roll_expression(roll, tree, mem, &expr->data.block.expr_v[0], expected_type, 0, NULL, 1, err);
 			if (*err == 0){
 				expr->data.block.type = only;
 			}
@@ -1573,12 +1576,12 @@ type_ast roll_expression(
 		type_ast lefttype = infer;
 		if (is_mutation == 1){
 			expression_ast* left_side = &expr->data.block.expr_v[0];
-			lefttype = roll_expression(roll, tree, mem, left_side, infer, 0, NULL, err);
+			lefttype = roll_expression(roll, tree, mem, left_side, infer, 0, NULL, 0, err);
 			if (*err != 0){
 				return lefttype;
 			}
 		}
-		type_ast full_type = roll_expression(roll, tree, mem, leftmost, lefttype, expr->data.block.expr_c-1, &expr->data.block.expr_v[index], err);
+		type_ast full_type = roll_expression(roll, tree, mem, leftmost, lefttype, expr->data.block.expr_c-1, &expr->data.block.expr_v[index], 0, err);
 		if (*err != 0){
 			return expected_type;
 		}
@@ -1588,7 +1591,7 @@ type_ast roll_expression(
 			if (*err != 0){
 				return full_type;
 			}
-			roll_expression(roll, tree, mem, term, left_type, 0, NULL, err);
+			roll_expression(roll, tree, mem, term, left_type, 0, NULL, 0, err);
 			if (*err != 0){
 				return full_type;
 			}
@@ -1685,10 +1688,10 @@ type_ast roll_expression(
 			if (expected_type.tag != NONE_TYPE){
 				type_ast wrapped_expected = {.tag=POINTER_TYPE};
 				wrapped_expected.data.pointer = &expected_type;
-				roll_expression(roll, tree, mem, location, wrapped_expected, 0, NULL, err);
+				roll_expression(roll, tree, mem, location, wrapped_expected, 0, NULL, 0, err);
 				return expected_type;
 			}
-			type_ast only = roll_expression(roll, tree, mem, &location->data.block.expr_v[0], expected_type, 0, NULL, err);
+			type_ast only = roll_expression(roll, tree, mem, &location->data.block.expr_v[0], expected_type, 0, NULL, 0, err);
 			if (only.tag != POINTER_TYPE){
 				snprintf(err, ERROR_BUFFER, " [!] Tried to dereference non pointer\n");
 				return only;
@@ -1706,7 +1709,7 @@ type_ast roll_expression(
 		}
 		expression_ast* d_leftmost = &location->data.block.expr_v[d_index];
 		d_index += 1;
-		type_ast d_full_type = roll_expression(roll, tree, mem, d_leftmost, infer, location->data.block.expr_c-1, &location->data.block.expr_v[d_index], err);
+		type_ast d_full_type = roll_expression(roll, tree, mem, d_leftmost, infer, location->data.block.expr_c-1, &location->data.block.expr_v[d_index], 0, err);
 		if (*err != 0){
 			return expected_type;
 		}
@@ -1723,14 +1726,14 @@ type_ast roll_expression(
 				if (*err != 0){
 					return d_full_type;
 				}
-				roll_expression(roll, tree, mem, term, left_type, 0, NULL, err);
+				roll_expression(roll, tree, mem, term, left_type, 0, NULL, 0, err);
 				if (*err != 0){
 					return d_full_type;
 				}
 				continue;
 			}
 			if (term->tag != BINDING_EXPRESSION){
-				type_ast arg_type = roll_expression(roll, tree, mem, term, infer, 0, NULL, err);
+				type_ast arg_type = roll_expression(roll, tree, mem, term, infer, 0, NULL, 0, err);
 				if (*err != 0){
 					return d_full_type;
 				}
@@ -1805,7 +1808,7 @@ type_ast roll_expression(
 		uint32_t access_index = 0;
 		expression_ast* access_leftmost = &apl->data.block.expr_v[access_index];
 		access_index += 1;
-		type_ast access_full_type = roll_expression(roll, tree, mem, access_leftmost, infer, apl->data.block.expr_c-1, &apl->data.block.expr_v[access_index], err);
+		type_ast access_full_type = roll_expression(roll, tree, mem, access_leftmost, infer, apl->data.block.expr_c-1, &apl->data.block.expr_v[access_index], 0, err);
 		if (*err != 0){
 			return expected_type;
 		}
@@ -1919,7 +1922,7 @@ type_ast roll_expression(
 				}
 				push_binding(roll, scope_item);
 			}
-			type_ast constructed = roll_expression(roll, tree, mem, expr->data.lambda.expression, expected_type, 0, NULL, err);
+			type_ast constructed = roll_expression(roll, tree, mem, expr->data.lambda.expression, expected_type, 0, NULL, 0, err);
 			pop_frame(roll);
 			if (*err != 0){
 				return constructed;
@@ -1928,12 +1931,16 @@ type_ast roll_expression(
 				snprintf(err, ERROR_BUFFER, " [!] Lambda expression returned unexpected type\n");
 				return constructed;
 			}
-			//TODO lift this lambda
-			binding_ast* captured_bindings = NULL;
-			uint16_t total_captures = pop_capture_frame(roll, &captured_bindings);
-			type_ast captured_type = prepend_captures(outer_copy, captured_bindings, total_captures, mem);
-			lift_lambda(tree, expr, captured_type, captured_bindings, total_captures, mem);
-			expr->data.block.type = outer_copy;
+			if (prevent_lift == 0){
+				binding_ast* captured_bindings = NULL;
+				uint16_t total_captures = pop_capture_frame(roll, &captured_bindings);
+				type_ast captured_type = prepend_captures(outer_copy, captured_bindings, total_captures, mem);
+				lift_lambda(tree, expr, captured_type, captured_bindings, total_captures, mem);
+				expr->data.block.type = outer_copy;
+			}
+			else{
+				expr->data.lambda.type = outer_copy;
+			}
 			return outer_copy;
 		}
 		if (argc < expr->data.lambda.argc){
@@ -1946,7 +1953,7 @@ type_ast roll_expression(
 		push_capture_frame(roll, mem);
 		for (uint32_t i = 0;i<expr->data.lambda.argc;++i){
 			expression_ast* arg_expr = &argv[i];
-			type_ast arg_type = roll_expression(roll, tree, mem, arg_expr, expected_type, 0, NULL, err);
+			type_ast arg_type = roll_expression(roll, tree, mem, arg_expr, expected_type, 0, NULL, 0, err);
 			if (*err != 0){
 				pop_frame(roll);
 				return expected_type;
@@ -1967,22 +1974,26 @@ type_ast roll_expression(
 			*focus->data.function.left = arg_type;
 			focus = focus->data.function.right;
 		}
-		type_ast defin = roll_expression(roll, tree, mem, expr->data.lambda.expression, expected_type, 0, NULL, err);
+		type_ast defin = roll_expression(roll, tree, mem, expr->data.lambda.expression, expected_type, 0, NULL, 0, err);
 		pop_frame(roll);
 		if (*err != 0){
 			return expected_type;
 		}
 		*focus = defin;
-		binding_ast* captured_bindings = NULL;
-		uint16_t total_captures = pop_capture_frame(roll, &captured_bindings);
-		//TODO lift this lambda
-		type_ast captured_type = prepend_captures(constructed, captured_bindings, total_captures, mem);
-		lift_lambda(tree, expr, captured_type, captured_bindings, total_captures, mem);
-		expr->data.block.type = constructed;
+		if (prevent_lift == 0){
+			binding_ast* captured_bindings = NULL;
+			uint16_t total_captures = pop_capture_frame(roll, &captured_bindings);
+			type_ast captured_type = prepend_captures(constructed, captured_bindings, total_captures, mem);
+			lift_lambda(tree, expr, captured_type, captured_bindings, total_captures, mem);
+			expr->data.block.type = constructed;
+		}
+		else{
+			expr->data.lambda.type = constructed;
+		}
 		return constructed;
 
 	case RETURN_EXPRESSION:
-		type_ast result = roll_expression(roll, tree, mem, expr->data.deref, expected_type, 0, NULL, err);
+		type_ast result = roll_expression(roll, tree, mem, expr->data.deref, expected_type, 0, NULL, 0, err);
 		if (*err != 0){
 			return result;
 		}
@@ -1990,7 +2001,7 @@ type_ast roll_expression(
 
 	case REF_EXPRESSION:
 		if (expected_type.tag == NONE_TYPE){
-			type_ast unref = roll_expression(roll, tree, mem, expr->data.deref, expected_type, 0, NULL, err);
+			type_ast unref = roll_expression(roll, tree, mem, expr->data.deref, expected_type, 0, NULL, 0, err);
 			if (*err != 0){
 				return unref;
 			}
@@ -2004,7 +2015,7 @@ type_ast roll_expression(
 			snprintf(err, ERROR_BUFFER, " [!] Reference taken where non pointer was expected\n");
 			return expected_type;
 		}
-		type_ast unref = roll_expression(roll, tree, mem, expr->data.deref, *expected_type.data.pointer, 0, NULL, err);
+		type_ast unref = roll_expression(roll, tree, mem, expr->data.deref, *expected_type.data.pointer, 0, NULL, 0, err);
 		if (*err != 0){
 			return unref;
 		}
@@ -2283,21 +2294,21 @@ type_ast roll_statement_expression(
 			.data.primitive=INT_ANY,
 			.mut=0
 		};
-		roll_expression(roll, tree, mem, statement->data.if_statement.predicate, pred, 0, NULL, err);
+		roll_expression(roll, tree, mem, statement->data.if_statement.predicate, pred, 0, NULL, 0, err);
 		if (*err != 0){
 			*err = 0;
 			pred.mut = 1;
-			roll_expression(roll, tree, mem, statement->data.if_statement.predicate, pred, 0, NULL, err);
+			roll_expression(roll, tree, mem, statement->data.if_statement.predicate, pred, 0, NULL, 0, err);
 			if (*err != 0){
 				snprintf(err, ERROR_BUFFER, " [!] If statement predicate needs to return integral type\n");
 				return pred;
 			}
 		}
-		type_ast btype = roll_expression(roll, tree, mem, statement->data.if_statement.branch, expected_type, 0, NULL, err);
+		type_ast btype = roll_expression(roll, tree, mem, statement->data.if_statement.branch, expected_type, 0, NULL, 0, err);
 		if (*err != 0){
 			if (as_expression == 0 && expected_type.tag != NONE_TYPE){
 				*err = 0;
-				btype = roll_expression(roll, tree, mem, statement->data.if_statement.branch, infer, 0, NULL, err);
+				btype = roll_expression(roll, tree, mem, statement->data.if_statement.branch, infer, 0, NULL, 0, err);
 				if (*err != 0){
 					return expected_type;
 				}
@@ -2315,11 +2326,11 @@ type_ast roll_statement_expression(
 			return expected_type;
 		}
 		//TODO explicitly check if new if statement
-		type_ast atype = roll_expression(roll, tree, mem, statement->data.if_statement.alternate, expected_type, 0, NULL, err);
+		type_ast atype = roll_expression(roll, tree, mem, statement->data.if_statement.alternate, expected_type, 0, NULL, 0, err);
 		if (*err != 0){
 			if (as_expression == 0 && expected_type.tag != NONE_TYPE){
 				*err = 0;
-				atype = roll_expression(roll, tree, mem, statement->data.if_statement.alternate, infer, 0, NULL, err);
+				atype = roll_expression(roll, tree, mem, statement->data.if_statement.alternate, infer, 0, NULL, 0, err);
 				if (*err != 0){
 					return expected_type;
 				}
@@ -2410,14 +2421,14 @@ type_ast roll_literal_expression(
 			}
 			uint32_t index = 0;
 			expression_ast* expr = &lit->data.array.member_v[index];
-			inner = roll_expression(roll, tree, mem, expr, expected_type, 0, NULL, err);
+			inner = roll_expression(roll, tree, mem, expr, expected_type, 0, NULL, 0, err);
 			if (*err != 0){
 				return expected_type;
 			}
 			index += 1;
 			for (;index<lit->data.array.member_c;++index){
 				expr = &lit->data.array.member_v[index];
-				roll_expression(roll, tree, mem, expr, inner, 0, NULL, err);
+				roll_expression(roll, tree, mem, expr, inner, 0, NULL, 0, err);
 				if (*err != 0){
 					return inner;
 				}
@@ -2448,7 +2459,7 @@ type_ast roll_literal_expression(
 		}
 		for (uint32_t i = 0;i<lit->data.array.member_c;++i){
 			expression_ast* expr = &lit->data.array.member_v[i];
-			roll_expression(roll, tree, mem, expr, inner, 0, NULL, err);
+			roll_expression(roll, tree, mem, expr, inner, 0, NULL, 0, err);
 			if (*err != 0){
 				return expected_type;
 			}
@@ -2517,7 +2528,7 @@ type_ast roll_literal_expression(
 				data_member = stack[nest_level];
 				target_struct = nest[nest_level];
 			}
-			roll_expression(roll, tree, mem, term, target_struct.binding_v[data_member].type, 0, NULL, err);
+			roll_expression(roll, tree, mem, term, target_struct.binding_v[data_member].type, 0, NULL, 0, err);
 			if (*err != 0){
 				return infer;
 			}
