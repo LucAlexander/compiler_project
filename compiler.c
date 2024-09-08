@@ -1637,15 +1637,12 @@ type_ast roll_expression(
 			return expr->data.binding.type;
 		}
 		if (type_cmp(&expected_type, bound_type, FOR_APPLICATION) != 0){
-			if (expected_type.tag == USER_TYPE){
-				type_ast decyphered = resolve_alias(tree, expected_type, err);
-				if (*err != 0){
-					return expected_type;
-				}
-				if (type_cmp(&decyphered, bound_type, FOR_APPLICATION) != 0){
-					snprintf(err, ERROR_BUFFER, " [!] Binding '%s' was not the expected type\n", expr->data.binding.name.string);
-					return expected_type;
-				}
+			type_ast expected_alias = expected_type;
+			type_ast bound_alias = *bound_type;
+			reduce_aliases(tree, &expected_alias, &bound_alias);
+			if (type_cmp(&expected_alias, &bound_alias, FOR_APPLICATION) != 0){
+				snprintf(err, ERROR_BUFFER, " [!] Binding '%s' was not the expected type\n", expr->data.binding.name.string);
+				return expected_type;
 			}
 		}
 		expr->data.binding.type = expected_type;
@@ -1758,16 +1755,32 @@ type_ast roll_expression(
 				snprintf(err, ERROR_BUFFER, " [!] Expected a pointer to dereference, was neither pointer, buffer access, pointer buffer access, or struct member dereference\n");
 				return d_full_type;
 			}
-			structure_ast* target_struct;
-			switch (d_full_type.data.pointer->tag){
-			case STRUCT_TYPE:
-				target_struct = d_full_type.data.pointer->data.structure;
-				break;
-			case USER_TYPE:
-				target_struct = resolve_type_or_alias(tree, *d_full_type.data.pointer, err).data.structure;
+			structure_ast* target_struct = NULL;
+			type_ast matched_type = *d_full_type.data.pointer;
+			if (d_full_type.data.pointer->tag == USER_TYPE){
+				matched_type = resolve_type_or_alias(tree, *d_full_type.data.pointer, err);
 				if (*err != 0){
 					return d_full_type;
 				}
+			}
+			switch (matched_type.tag){
+			case STRUCT_TYPE:
+				target_struct = matched_type.data.structure;
+				type_ast accessed_type;
+				uint8_t found = 0;
+				for (uint32_t k = 0;k<target_struct->binding_c;++k){
+					binding_ast target_binding = target_struct->binding_v[k];
+					if (strncmp(term->data.binding.name.string, target_binding.name.string, TOKEN_MAX) == 0){
+						accessed_type = target_binding.type;
+						found = 1;
+						break;
+					}
+				}
+				if (found == 0){
+					snprintf(err, ERROR_BUFFER, " [!] No member found in dereferenced structure\n");
+					return d_full_type;
+				}
+				d_full_type = accessed_type;
 				break;
 			case POINTER_TYPE:
 				//TODO
@@ -1777,21 +1790,6 @@ type_ast roll_expression(
 				snprintf(err, ERROR_BUFFER, " [!] Expected structure to dereference member\n");
 				return d_full_type;
 			}
-			type_ast accessed_type;
-			uint8_t found = 0;
-			for (uint32_t k = 0;k<target_struct->binding_c;++k){
-				binding_ast target_binding = target_struct->binding_v[k];
-				if (strncmp(term->data.binding.name.string, target_binding.name.string, TOKEN_MAX) == 0){
-					accessed_type = target_binding.type;
-					found = 1;
-					break;
-				}
-			}
-			if (found == 0){
-				snprintf(err, ERROR_BUFFER, " [!] No member found in dereferenced structure\n");
-				return d_full_type;
-			}
-			d_full_type = accessed_type;
 		}
 		if (d_full_type.tag == POINTER_TYPE){
 			location->data.block.type = *d_full_type.data.pointer;
@@ -2006,12 +2004,32 @@ type_ast roll_expression(
 	return expected_type;
 }
 
+void reduce_aliases(ast* const tree, type_ast* left, type_ast* right){
+	while (left->tag == USER_TYPE || right->tag == USER_TYPE){
+		new_type_ast* left_alias = alias_ast_map_access(&tree->aliases, left->data.user.string);
+		new_type_ast* right_alias = alias_ast_map_access(&tree->aliases, right->data.user.string);
+		if (left_alias != NULL){
+			*left = left_alias->type;
+			if (right_alias != NULL){
+				*right = right_alias->type;
+			}
+		}
+		else if (right_alias != NULL){
+			*right = right_alias->type;
+		}
+		else{
+			return;
+		}
+	}
+}
+
 type_ast resolve_alias(ast* const tree, type_ast root, char* err){
 	uint8_t found = 0;
 	while (root.tag == USER_TYPE){
 		new_type_ast* primitive_alias = alias_ast_map_access(&tree->aliases, root.data.user.string);
 		if (primitive_alias == NULL){
 			if (found == 0){
+				int hi = 1;
 				snprintf(err, ERROR_BUFFER, " [!] Unknown user type or alias\n");
 			}
 			return root;

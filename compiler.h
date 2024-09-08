@@ -358,5 +358,6 @@ type_ast roll_literal_expression(scope* const roll, ast* const tree, pool* const
 type_ast apply_type(type_ast* const func, char* err);
 type_ast resolve_type_or_alias(ast* const tree, type_ast root, char* err);
 type_ast resolve_alias(ast* const tree, type_ast root, char* err);
+void reduce_aliases(ast* const tree, type_ast* left, type_ast* right);
 
 #endif
