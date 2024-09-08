@@ -1637,8 +1637,16 @@ type_ast roll_expression(
 			return expr->data.binding.type;
 		}
 		if (type_cmp(&expected_type, bound_type, FOR_APPLICATION) != 0){
-			snprintf(err, ERROR_BUFFER, " [!] Binding '%s' was not the expected type\n", expr->data.binding.name.string);
-			return expected_type;
+			if (expected_type.tag == USER_TYPE){
+				type_ast decyphered = resolve_alias(tree, expected_type, err);
+				if (*err != 0){
+					return expected_type;
+				}
+				if (type_cmp(&decyphered, bound_type, FOR_APPLICATION) != 0){
+					snprintf(err, ERROR_BUFFER, " [!] Binding '%s' was not the expected type\n", expr->data.binding.name.string);
+					return expected_type;
+				}
+			}
 		}
 		expr->data.binding.type = expected_type;
 		return expected_type;
@@ -1998,14 +2006,33 @@ type_ast roll_expression(
 	return expected_type;
 }
 
+type_ast resolve_alias(ast* const tree, type_ast root, char* err){
+	uint8_t found = 0;
+	while (root.tag == USER_TYPE){
+		new_type_ast* primitive_alias = alias_ast_map_access(&tree->aliases, root.data.user.string);
+		if (primitive_alias == NULL){
+			if (found == 0){
+				snprintf(err, ERROR_BUFFER, " [!] Unknown user type or alias\n");
+			}
+			return root;
+		}
+		found = 1;
+		root = primitive_alias->type;
+	}
+	return root;
+}
+
 type_ast resolve_type_or_alias(ast* const tree, type_ast root, char* err){
 	while (root.tag == USER_TYPE){
 		new_type_ast* primitive_new_type = new_type_ast_map_access(&tree->types, root.data.user.string);
-		if (primitive_new_type == NULL){
-			snprintf(err, ERROR_BUFFER, " [!] Unknown user primitive type\n");
+		if (primitive_new_type != NULL){
+			root = primitive_new_type->type;
+			continue;
+		}
+		root = resolve_alias(tree, root, err);
+		if (*err != 0){
 			return root;
 		}
-		root = primitive_new_type->type;
 	}
 	return root;
 }

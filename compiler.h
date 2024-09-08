@@ -357,5 +357,6 @@ type_ast roll_statement_expression(scope* const roll, ast* const tree, pool* con
 type_ast roll_literal_expression(scope* const roll, ast* const tree, pool* const mem, literal_ast* const lit, type_ast expected_type, char* err);
 type_ast apply_type(type_ast* const func, char* err);
 type_ast resolve_type_or_alias(ast* const tree, type_ast root, char* err);
+type_ast resolve_alias(ast* const tree, type_ast root, char* err);
 
 #endif
