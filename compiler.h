@@ -328,6 +328,7 @@ typedef struct ast{
 	uint32_t func_c;
 	uint32_t new_type_c;
 	uint32_t alias_c;
+	uint32_t lifted_lambdas;
 } ast;
 
 void show_ast(const ast* const tree);
@@ -387,6 +388,6 @@ type_ast resolve_type_or_alias(ast* const tree, type_ast root, char* err);
 type_ast resolve_alias(ast* const tree, type_ast root, char* err);
 void reduce_aliases(ast* const tree, type_ast* left, type_ast* right);
 type_ast prepend_captures(type_ast start, binding_ast* captures, uint16_t total_captures, pool* const mem);
-void add_lambda_capture_application(expression_ast* expr, type_ast captured_type, binding_ast* captured_bindings, uint16_t total_captures, pool* const mem);
+void lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, binding_ast* captured_bindings, uint16_t total_captures, pool* const mem);
 
 #endif

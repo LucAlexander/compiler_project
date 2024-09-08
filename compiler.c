@@ -346,7 +346,8 @@ ast parse(FILE* fd, pool* const mem, char* err){
 		.alias_c = 0,
 		.functions = function_ast_map_init(mem),
 		.types = new_type_ast_map_init(mem),
-		.aliases = alias_ast_map_init(mem)
+		.aliases = alias_ast_map_init(mem),
+		.lifted_lambdas=0
 	};
 	// parse imports
 	tree.import_v = pool_request(mem, sizeof(token)*MAX_IMPORTS);
@@ -1625,11 +1626,11 @@ type_ast roll_expression(
 			}
 			bound_type = &bound_function->type;
 		}
-		else if (needs_capturing == 1){
-			push_capture_binding(roll, expr->data.binding);
-		}
 		if (expected_type.tag == NONE_TYPE){
 			expr->data.binding.type = *bound_type;
+			if (needs_capturing == 1){
+				push_capture_binding(roll, expr->data.binding);
+			}
 			return expr->data.binding.type;
 		}
 		if (type_cmp(&expected_type, bound_type, FOR_APPLICATION) != 0){
@@ -1642,6 +1643,9 @@ type_ast roll_expression(
 			}
 		}
 		expr->data.binding.type = expected_type;
+		if (needs_capturing == 1){
+			push_capture_binding(roll, expr->data.binding);
+		}
 		return expected_type;
 
 	case VALUE_EXPRESSION:
@@ -1928,7 +1932,7 @@ type_ast roll_expression(
 			binding_ast* captured_bindings = NULL;
 			uint16_t total_captures = pop_capture_frame(roll, &captured_bindings);
 			type_ast captured_type = prepend_captures(outer_copy, captured_bindings, total_captures, mem);
-			add_lambda_capture_application(expr, captured_type, captured_bindings, total_captures, mem);
+			lift_lambda(tree, expr, captured_type, captured_bindings, total_captures, mem);
 			expr->data.block.type = outer_copy;
 			return outer_copy;
 		}
@@ -1973,7 +1977,7 @@ type_ast roll_expression(
 		uint16_t total_captures = pop_capture_frame(roll, &captured_bindings);
 		//TODO lift this lambda
 		type_ast captured_type = prepend_captures(constructed, captured_bindings, total_captures, mem);
-		add_lambda_capture_application(expr, captured_type, captured_bindings, total_captures, mem);
+		lift_lambda(tree, expr, captured_type, captured_bindings, total_captures, mem);
 		expr->data.block.type = constructed;
 		return constructed;
 
@@ -2012,17 +2016,37 @@ type_ast roll_expression(
 	return expected_type;
 }
 
-void add_lambda_capture_application(expression_ast* expr, type_ast captured_type, binding_ast* captured_bindings, uint16_t total_captures, pool* const mem){
+void lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, binding_ast* captured_bindings, uint16_t total_captures, pool* const mem){
 	expr->data.lambda.type = captured_type;
 	expression_ast save_lambda = {
 		.tag=LAMBDA_EXPRESSION,
 		.data.lambda=expr->data.lambda
 	};
+	for (uint32_t i = 0;i<save_lambda.data.lambda.argc;++i){
+		uint32_t index = save_lambda.data.lambda.argc-(i+1);
+		save_lambda.data.lambda.argv[index+total_captures] = save_lambda.data.lambda.argv[index];
+	}
+	for (uint32_t i = 0;i<total_captures;++i){
+		save_lambda.data.lambda.argv[i] = captured_bindings[i].name;
+	}
+	save_lambda.data.lambda.argc += total_captures;
+	token new_token = {
+		.type=TOKEN_IDENTIFIER,
+		.string={0}
+	};
+	snprintf(new_token.string, TOKEN_MAX, ":LAMBDA_%u", tree->lifted_lambdas);
+	new_token.len=strlen(new_token.string);
+	tree->lifted_lambdas += 1;
+	expression_ast repl_lambda_binding = {
+		.tag=BINDING_EXPRESSION,
+		.data.binding.name=new_token,
+		.data.binding.type=captured_type
+	};
 	expr->tag = APPLICATION_EXPRESSION;
 	uint32_t repl_size = total_captures+1;
 	expr->data.block.expr_c = repl_size;
 	expr->data.block.expr_v = pool_request(mem, sizeof(expression_ast)*repl_size);
-	expr->data.block.expr_v[0] = save_lambda;//TODO replace with with new replacement binding
+	expr->data.block.expr_v[0] = repl_lambda_binding;
 	for (uint32_t repl_term = 1;repl_term < repl_size;++repl_term){
 		expression_ast repl_binding = {
 			.tag=BINDING_EXPRESSION,
@@ -2030,6 +2054,15 @@ void add_lambda_capture_application(expression_ast* expr, type_ast captured_type
 		};
 		expr->data.block.expr_v[repl_term] = repl_binding;
 	}
+	function_ast f = {
+		.type=captured_type,
+		.enclosing=0,
+		.name=new_token,
+		.expression=save_lambda
+	};
+	tree->func_v[tree->func_c] = f;
+	function_ast_map_insert(&tree->functions, tree->func_v[tree->func_c].name.string, &tree->func_v[tree->func_c]);
+	tree->func_c += 1;
 }
 
 type_ast prepend_captures(type_ast start, binding_ast* captures, uint16_t total_captures, pool* const mem){
