@@ -2261,11 +2261,18 @@ type_ast roll_literal_expression(
 			lit->type = inner;
 			return inner;
 		}
-		if (expected_type.tag == POINTER_TYPE){
-			inner = *expected_type.data.pointer;
+		type_ast inner_type = expected_type;
+		if (expected_type.tag == USER_TYPE){
+			inner_type = resolve_type_or_alias(tree, expected_type, err);
+			if (*err != 0){
+				return expected_type;
+			}
 		}
-		else if (expected_type.tag == BUFFER_TYPE){
-			inner = *expected_type.data.buffer.base;
+		if (inner_type.tag == POINTER_TYPE){
+			inner = *inner_type.data.pointer;
+		}
+		else if (inner_type.tag == BUFFER_TYPE){
+			inner = *inner_type.data.buffer.base;
 		}
 		else{
 			snprintf(err, ERROR_BUFFER, " [!] String literal used where pointer or buffer was not expected\n");
@@ -2305,14 +2312,21 @@ type_ast roll_literal_expression(
 			*lit->type.data.pointer = inner;
 			return lit->type;
 		}
-		if (expected_type.tag == POINTER_TYPE){
-			inner = *expected_type.data.pointer;
+		type_ast container = expected_type;
+		if (expected_type.tag == USER_TYPE){
+			container = resolve_type_or_alias(tree, expected_type, err);
+			if (*err != 0){
+				return expected_type;
+			}
 		}
-		else if (expected_type.tag == BUFFER_TYPE){
-			inner = *expected_type.data.buffer.base;
+		if (container.tag == POINTER_TYPE){
+			inner = *container.data.pointer;
+		}
+		else if (container.tag == BUFFER_TYPE){
+			inner = *container.data.buffer.base;
 		}
 		else{
-			snprintf(err, ERROR_BUFFER, " [!] String literal used where pointer or buffer was expected\n");
+			snprintf(err, ERROR_BUFFER, " [!] Array literal used where pointer or buffer was not expected\n");
 			return expected_type;
 		}
 		for (uint32_t i = 0;i<lit->data.array.member_c;++i){
