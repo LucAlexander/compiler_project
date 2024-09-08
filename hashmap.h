@@ -78,13 +78,12 @@ type* type##_bucket_access(type##_map_bucket* bucket, const char* const key){\
 	if (bucket->tag == BUCKET_EMPTY){\
 		return NULL;\
 	}\
-	switch (strncmp(key, bucket->key, TOKEN_MAX)){\
-	case -1:\
+	int32_t cmp = strncmp(key, bucket->key, TOKEN_MAX);\
+	if (cmp < 0){\
 		return type##_bucket_access(bucket->left, key);\
-	case 1:\
+	}\
+	if (cmp > 0){\
 		return type##_bucket_access(bucket->right, key);\
-	default:\
-		break;\
 	}\
 	return bucket->value;\
 }\

@@ -1893,16 +1893,15 @@ type_ast roll_expression(
 		if (expr->data.lambda.type.tag != NONE_TYPE){
 			return expr->data.lambda.type;
 		}
-		push_capture_frame(roll, mem);
 		push_frame(roll);
 		type_ast outer_copy = expected_type;
 		if (expected_type.tag != NONE_TYPE){
+			push_capture_frame(roll, mem);
 			for (uint32_t i = 0;i<expr->data.lambda.argc;++i){
 				token candidate = expr->data.lambda.argv[i];
 				type_ast declared_type = apply_type(&expected_type, err);
 				if (*err != 0){
 					pop_frame(roll);
-					pop_capture_frame(roll, NULL);
 					return declared_type;
 				}
 				binding_ast scope_item = {
@@ -1910,6 +1909,7 @@ type_ast roll_expression(
 					.name=candidate
 				};
 				if (scope_contains(roll, &scope_item, NULL) != NULL){
+					pop_frame(roll);
 					snprintf(err, ERROR_BUFFER, " [!] Binding with name '%s' already in scope\n", scope_item.name.string);
 					return expected_type;
 				}
@@ -1917,7 +1917,6 @@ type_ast roll_expression(
 			}
 			type_ast constructed = roll_expression(roll, tree, mem, expr->data.lambda.expression, expected_type, 0, NULL, err);
 			pop_frame(roll);
-			pop_capture_frame(roll, NULL);
 			if (*err != 0){
 				return constructed;
 			}
@@ -1925,23 +1924,27 @@ type_ast roll_expression(
 				snprintf(err, ERROR_BUFFER, " [!] Lambda expression returned unexpected type\n");
 				return constructed;
 			}
-			expr->data.lambda.type = outer_copy;
+			//TODO lift this lambda
+			binding_ast* captured_bindings = NULL;
+			uint16_t total_captures = pop_capture_frame(roll, &captured_bindings);
+			type_ast captured_type = prepend_captures(outer_copy, captured_bindings, total_captures, mem);
+			add_lambda_capture_application(expr, captured_type, captured_bindings, total_captures, mem);
+			expr->data.block.type = outer_copy;
 			return outer_copy;
 		}
 		if (argc < expr->data.lambda.argc){
 			snprintf(err, ERROR_BUFFER, " [!] Too few arguments for lambda expression\n");
 			pop_frame(roll);
-			pop_capture_frame(roll, NULL);
 			return expected_type;
 		}
 		type_ast constructed;
 		type_ast* focus = &constructed;
+		push_capture_frame(roll, mem);
 		for (uint32_t i = 0;i<expr->data.lambda.argc;++i){
 			expression_ast* arg_expr = &argv[i];
 			type_ast arg_type = roll_expression(roll, tree, mem, arg_expr, expected_type, 0, NULL, err);
 			if (*err != 0){
 				pop_frame(roll);
-				pop_capture_frame(roll, NULL);
 				return expected_type;
 			}
 			binding_ast scope_item = {
@@ -1951,7 +1954,6 @@ type_ast roll_expression(
 			if (scope_contains(roll, &scope_item, NULL) != NULL){
 				snprintf(err, ERROR_BUFFER, " [!] Binding with name '%s' already in scope\n", scope_item.name.string);
 				pop_frame(roll);
-				pop_capture_frame(roll, NULL);
 				return expected_type;
 			}
 			push_binding(roll, scope_item);
@@ -1963,12 +1965,16 @@ type_ast roll_expression(
 		}
 		type_ast defin = roll_expression(roll, tree, mem, expr->data.lambda.expression, expected_type, 0, NULL, err);
 		pop_frame(roll);
-		pop_capture_frame(roll, NULL);
 		if (*err != 0){
 			return expected_type;
 		}
 		*focus = defin;
-		expr->data.lambda.type = constructed;
+		binding_ast* captured_bindings = NULL;
+		uint16_t total_captures = pop_capture_frame(roll, &captured_bindings);
+		//TODO lift this lambda
+		type_ast captured_type = prepend_captures(constructed, captured_bindings, total_captures, mem);
+		add_lambda_capture_application(expr, captured_type, captured_bindings, total_captures, mem);
+		expr->data.block.type = constructed;
 		return constructed;
 
 	case RETURN_EXPRESSION:
@@ -2004,6 +2010,41 @@ type_ast roll_expression(
 		snprintf(err, ERROR_BUFFER, " [!] Unexpected expression type\n");
 	}
 	return expected_type;
+}
+
+void add_lambda_capture_application(expression_ast* expr, type_ast captured_type, binding_ast* captured_bindings, uint16_t total_captures, pool* const mem){
+	expr->data.lambda.type = captured_type;
+	expression_ast save_lambda = {
+		.tag=LAMBDA_EXPRESSION,
+		.data.lambda=expr->data.lambda
+	};
+	expr->tag = APPLICATION_EXPRESSION;
+	uint32_t repl_size = total_captures+1;
+	expr->data.block.expr_c = repl_size;
+	expr->data.block.expr_v = pool_request(mem, sizeof(expression_ast)*repl_size);
+	expr->data.block.expr_v[0] = save_lambda;//TODO replace with with new replacement binding
+	for (uint32_t repl_term = 1;repl_term < repl_size;++repl_term){
+		expression_ast repl_binding = {
+			.tag=BINDING_EXPRESSION,
+			.data.binding=captured_bindings[repl_term-1]
+		};
+		expr->data.block.expr_v[repl_term] = repl_binding;
+	}
+}
+
+type_ast prepend_captures(type_ast start, binding_ast* captures, uint16_t total_captures, pool* const mem){
+	for (uint16_t i = 0;i<total_captures;++i){
+		binding_ast binding = captures[i];
+		type_ast outer = {
+			.tag=FUNCTION_TYPE
+		};
+		outer.data.function.left = pool_request(mem, sizeof(type_ast));
+		outer.data.function.right = pool_request(mem, sizeof(type_ast));
+		*outer.data.function.left = binding.type;
+		*outer.data.function.right = start;
+		start = outer;
+	}
+	return start;
 }
 
 void push_capture_frame(scope* const roll, pool* const mem){
@@ -2176,7 +2217,8 @@ type_ast* scope_contains(scope* const roll, binding_ast* const binding, uint8_t*
 		uint16_t index = roll->binding_count - (i+1);
 		if (strcmp(roll->binding_stack[index].name.string, binding->name.string) == 0){
 			if ((needs_capturing != NULL)
-			 && (index >= roll->captures->binding_count_point)){
+			 && (index < roll->captures->binding_count_point)
+			 && (index >= roll->builtin_stack_frame)){
 				*needs_capturing = 1;
 			}
 			return &roll->binding_stack[index].type;
@@ -2496,6 +2538,7 @@ int compile_from_file(char* filename){
 		.binding_count_point=0
 	};
 	push_builtins(&roll, &mem);
+	roll.builtin_stack_frame = roll.binding_count;
 	transform_ast(&roll, &tree, &mem, err);
 	if (*err != 0){
 		fprintf(stderr, "Could not compile from source file: %s\n", filename);

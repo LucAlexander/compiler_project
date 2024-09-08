@@ -365,6 +365,7 @@ typedef struct scope{
 	uint16_t frame_capacity;
 	capture_stack* captures;
 	uint16_t capture_frame;
+	uint16_t builtin_stack_frame;
 }scope;
 
 void push_capture_frame(scope* const roll, pool* const mem);
@@ -385,5 +386,7 @@ type_ast apply_type(type_ast* const func, char* err);
 type_ast resolve_type_or_alias(ast* const tree, type_ast root, char* err);
 type_ast resolve_alias(ast* const tree, type_ast root, char* err);
 void reduce_aliases(ast* const tree, type_ast* left, type_ast* right);
+type_ast prepend_captures(type_ast start, binding_ast* captures, uint16_t total_captures, pool* const mem);
+void add_lambda_capture_application(expression_ast* expr, type_ast captured_type, binding_ast* captured_bindings, uint16_t total_captures, pool* const mem);
 
 #endif
