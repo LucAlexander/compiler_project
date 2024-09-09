@@ -173,7 +173,7 @@ typedef enum PRIMITIVE_TAGS {
 	FLOAT_ANY=11
 } PRIMITIVE_TAGS;
 
-typedef struct type_ast{
+typedef struct type_ast {
 	enum {
 		FUNCTION_TYPE,
 		PRIMITIVE_TYPE,

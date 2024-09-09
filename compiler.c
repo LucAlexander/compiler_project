@@ -1425,14 +1425,17 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 //TODO revisit statement/statement expressions/branching/conditionals
 //TODO memory optimizations
 //TODO casting between types
+//TODO memory arena/pool builtin stuff
 //TODO fix type equality
 //TODO syntax for enumerations
 //TODO char literals
 //TODO matches on enumerated struct union, maybe with @
 /* TODO semantic pass stuff
- * group function application into distinct calls for defined top level functions
+ * fill captures ?
  * lift closures
- * fill captures
+ * replace closure references
+ * group function application into distinct calls for defined top level functions
+ * create structures for partial application cases
 */
 }
 
@@ -1535,10 +1538,6 @@ type_ast roll_expression(
 			.type=desired,
 			.name=expr->data.closure.func->name
 		};
-		uint8_t prevent = 0;
-		if (equation->tag == LAMBDA_EXPRESSION){
-			prevent = 1;
-		}
 		uint8_t needs_capture = 0;
 		if (scope_contains(roll, &scope_item, &needs_capture) != NULL){
 			snprintf(err, ERROR_BUFFER, " [!] Binding with name '%s' already in scope\n", scope_item.name.string);
@@ -1548,7 +1547,7 @@ type_ast roll_expression(
 			push_capture_binding(roll, scope_item);
 		}
 		push_binding(roll, scope_item);
-		roll_expression(roll, tree, mem, equation, desired, 0, NULL, prevent, err);
+		roll_expression(roll, tree, mem, equation, desired, 0, NULL, 1, err);
 		return expected_type;
 
 	case APPLICATION_EXPRESSION:
@@ -1556,7 +1555,7 @@ type_ast roll_expression(
 			return expr->data.block.type;
 		}
 		if (expr->data.block.expr_c == 1){
-			type_ast only = roll_expression(roll, tree, mem, &expr->data.block.expr_v[0], expected_type, 0, NULL, 1, err);
+			type_ast only = roll_expression(roll, tree, mem, &expr->data.block.expr_v[0], expected_type, argc, argv, prevent_lift, err);
 			if (*err == 0){
 				expr->data.block.type = only;
 			}
