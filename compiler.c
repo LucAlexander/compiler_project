@@ -712,6 +712,9 @@ function_ast parse_function(lexer* const lex, pool* const mem, token tok, char* 
 		enclosing = 1;
 	}
 	expression_ast expr = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_SEMI, 0);
+	if (expr.tag == APPLICATION_EXPRESSION && expr.data.block.expr_c == 1){
+		expr = expr.data.block.expr_v[0];
+	}
 	return (function_ast){
 		.type=type,
 		.name=name,
@@ -1546,8 +1549,54 @@ type_ast roll_expression(
 		if (needs_capture == 1){
 			push_capture_binding(roll, scope_item);
 		}
+		push_capture_frame(roll, mem);
 		push_binding(roll, scope_item);
 		roll_expression(roll, tree, mem, equation, desired, 0, NULL, 1, err);
+		binding_ast* captured_binds = NULL;
+		uint16_t num_caps = pop_capture_frame(roll, &captured_binds);
+		if (expr->data.closure.func->expression.tag == LAMBDA_EXPRESSION){
+			lambda_ast* focus_lambda = &expr->data.closure.func->expression.data.lambda;
+			type_ast captured_type = prepend_captures(desired, captured_binds, num_caps, mem);
+			for (uint32_t i = 0;i<focus_lambda->argc;++i){
+				uint32_t index = focus_lambda->argc-(i+1);
+				focus_lambda->argv[index+num_caps] = focus_lambda->argv[index];
+			}
+			for (uint32_t i = 0;i<num_caps;++i){
+				focus_lambda->argv[num_caps-(1+i)] = captured_binds[i].name;
+			}
+			focus_lambda->argc += num_caps;
+			function_ast lifted_closure = *expr->data.closure.func;
+			lifted_closure.type = captured_type;
+			snprintf(lifted_closure.name.string, TOKEN_MAX, ":CLOSURE_%u", tree->lifted_lambdas);
+			tree->lifted_lambdas += 1;
+			tree->func_v[tree->func_c] = lifted_closure;
+			function_ast_map_insert(&tree->functions, tree->func_v[tree->func_c].name.string, &tree->func_v[tree->func_c]);
+			tree->func_c += 1;
+			binding_ast new_binding = {
+				.type=lifted_closure.type,
+				.name=lifted_closure.name
+			};
+			expression_ast new_binding_expr = {
+				.tag=BINDING_EXPRESSION,
+				.data.binding=new_binding
+			};
+			uint32_t repl_size = num_caps+1;
+			expression_ast new_application_expr = {
+				.tag=APPLICATION_EXPRESSION,
+				.data.block.expr_c=repl_size,
+				.data.block.expr_v=pool_request(mem, repl_size*sizeof(expression_ast)),
+				.data.block.type=desired
+			};
+			new_application_expr.data.block.expr_v[0] = new_binding_expr;
+			for (uint32_t i = 1;i<repl_size;++i){
+				expression_ast repl_binding = {
+					.tag=BINDING_EXPRESSION,
+					.data.binding=captured_binds[i-1]
+				};
+				new_application_expr.data.block.expr_v[repl_size-i] = repl_binding;
+			}
+			expr->data.closure.func->expression = new_application_expr;
+		}
 		return expected_type;
 
 	case APPLICATION_EXPRESSION:
@@ -1902,7 +1951,9 @@ type_ast roll_expression(
 		push_frame(roll);
 		type_ast outer_copy = expected_type;
 		if (expected_type.tag != NONE_TYPE){
-			push_capture_frame(roll, mem);
+			if (prevent_lift == 0){
+				push_capture_frame(roll, mem);
+			}
 			for (uint32_t i = 0;i<expr->data.lambda.argc;++i){
 				token candidate = expr->data.lambda.argv[i];
 				type_ast declared_type = apply_type(&expected_type, err);
@@ -1949,7 +2000,9 @@ type_ast roll_expression(
 		}
 		type_ast constructed;
 		type_ast* focus = &constructed;
-		push_capture_frame(roll, mem);
+		if (prevent_lift == 0){
+			push_capture_frame(roll, mem);
+		}
 		for (uint32_t i = 0;i<expr->data.lambda.argc;++i){
 			expression_ast* arg_expr = &argv[i];
 			type_ast arg_type = roll_expression(roll, tree, mem, arg_expr, expected_type, 0, NULL, 0, err);
@@ -2037,7 +2090,7 @@ void lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, 
 		save_lambda.data.lambda.argv[index+total_captures] = save_lambda.data.lambda.argv[index];
 	}
 	for (uint32_t i = 0;i<total_captures;++i){
-		save_lambda.data.lambda.argv[i] = captured_bindings[i].name;
+		save_lambda.data.lambda.argv[total_captures-(1+i)] = captured_bindings[i].name;
 	}
 	save_lambda.data.lambda.argc += total_captures;
 	token new_token = {
@@ -2062,7 +2115,7 @@ void lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, 
 			.tag=BINDING_EXPRESSION,
 			.data.binding=captured_bindings[repl_term-1]
 		};
-		expr->data.block.expr_v[repl_term] = repl_binding;
+		expr->data.block.expr_v[repl_size-repl_term] = repl_binding;
 	}
 	function_ast f = {
 		.type=captured_type,
@@ -2675,7 +2728,7 @@ void push_builtins(scope* const roll, pool* const mem){
 }
 
 void show_token(const token* const tok){
-	printf("%.*s ", tok->len, tok->string);
+	printf("%.*s ", TOKEN_MAX, tok->string);
 	fflush(stdout);
 }
 

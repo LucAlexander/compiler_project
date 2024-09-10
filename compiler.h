@@ -233,7 +233,7 @@ typedef struct statement_ast{
 
 void show_statement(const statement_ast* const statement, uint8_t indent);
 
-typedef struct lambda_ast{
+typedef struct lambda_ast {
 	token* argv;
 	uint32_t argc;
 	type_ast type;
@@ -305,7 +305,7 @@ MAP_DEF(alias_ast)
 void show_new_type(const new_type_ast* const new_type);
 void show_alias(const alias_ast* const alias);
 
-typedef struct function_ast{
+typedef struct function_ast {
 	type_ast type;
 	token name;
 	uint8_t enclosing;
@@ -357,7 +357,12 @@ typedef struct capture_stack {
 	uint16_t binding_count_point;
 } capture_stack;
 
-typedef struct scope{
+typedef struct replacement_binding {
+	token initial;
+	token replace;
+} replacement_binding;
+
+typedef struct scope {
 	binding_ast* binding_stack;
 	uint16_t* frame_stack;
 	uint16_t binding_count;
@@ -367,7 +372,7 @@ typedef struct scope{
 	capture_stack* captures;
 	uint16_t capture_frame;
 	uint16_t builtin_stack_frame;
-}scope;
+} scope;
 
 void push_capture_frame(scope* const roll, pool* const mem);
 uint16_t pop_capture_frame(scope* const roll, binding_ast** list_result);
