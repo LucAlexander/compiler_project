@@ -484,25 +484,27 @@ structure_ast parse_struct(lexer* const lex, pool* const mem, char* err){
 				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected identifier for enumerated union member or type for struct member, found '%s'\n", lex->line, lex->col, tok.string);
 				return outer;
 			}
+			if (outer.union_c == 0){
+				outer.union_v = pool_request(mem, sizeof(structure_ast)*MAX_MEMBERS);
+				outer.encoding = pool_request(mem, sizeof(int64_t)*MAX_MEMBERS);
+				outer.tag_v = pool_request(mem, sizeof(token)*MAX_MEMBERS);
+				outer.encoding[0] = 0;
+			}
+			else{
+				outer.encoding[outer.union_c] = outer.encoding[outer.union_c-1]+1;
+			}
+			outer.tag_v[outer.union_c] = tok;
+			outer.union_c += 1;
 			token open = parse_token(lex);
 			switch(open.type){
+			case TOKEN_SEMI:
+				break;
 			case TOKEN_BRACE_OPEN:
 				structure_ast s = parse_struct(lex, mem, err);
 				if (*err != 0){
 					return outer;
 				}
-				if (outer.union_c == 0){
-					outer.union_v = pool_request(mem, sizeof(structure_ast)*MAX_MEMBERS);
-					outer.encoding = pool_request(mem, sizeof(int64_t)*MAX_MEMBERS);
-					outer.tag_v = pool_request(mem, sizeof(token)*MAX_MEMBERS);
-					outer.encoding[0] = 0;
-				}
-				else{
-					outer.encoding[outer.union_c] = outer.encoding[outer.union_c-1]+1;
-				}
-				outer.union_v[outer.union_c] = s;
-				outer.tag_v[outer.union_c] = tok;
-				outer.union_c += 1;
+				outer.union_v[outer.union_c-1] = s;
 				token semi = parse_token(lex);
 				if (semi.type == TOKEN_SEMI){
 					break;
@@ -515,10 +517,11 @@ structure_ast parse_struct(lexer* const lex, pool* const mem, char* err){
 				token encoding = parse_token(lex);
 				if (encoding.type != TOKEN_INTEGER){
 					snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected enumerator encoding, found '%s'\n", lex->line, lex->col, encoding.string);
+					return outer;
 				}
 				token true_semi = parse_token(lex);
 				if (true_semi.type == TOKEN_SEMI){
-					outer.encoding[outer.union_c-1] = atoi(true_semi.string);
+					outer.encoding[outer.union_c-1] = atoi(encoding.string);
 					break;
 				}
 			default:
