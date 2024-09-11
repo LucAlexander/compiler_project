@@ -1453,6 +1453,8 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 	}
 }
 
+//TODO module system
+//TODO recursive assignment for non function oh no
 //TODO parametric types
 //TODO add constants, parametric constant buffer sizes
 //TODO revisit statement/statement expressions/branching/conditionals
@@ -1576,9 +1578,16 @@ type_ast roll_expression(
 		if (needs_capture == 1){
 			push_capture_binding(roll, scope_item);
 		}
-		push_capture_frame(roll, mem);
-		push_binding(roll, scope_item);
-		roll_expression(roll, tree, mem, equation, desired, 0, NULL, 1, err);
+		if (expr->data.closure.func->expression.tag == LAMBDA_EXPRESSION){
+			push_binding(roll, scope_item);
+			push_capture_frame(roll, mem);
+			roll_expression(roll, tree, mem, equation, desired, 0, NULL, 1, err);
+		}
+		else{
+			push_capture_frame(roll, mem);
+			roll_expression(roll, tree, mem, equation, desired, 0, NULL, 1, err);
+			push_binding(roll, scope_item);
+		}
 		binding_ast* captured_binds = NULL;
 		uint16_t num_caps = pop_capture_frame(roll, &captured_binds);
 		if (expr->data.closure.func->expression.tag == LAMBDA_EXPRESSION){
