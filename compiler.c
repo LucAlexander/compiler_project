@@ -458,6 +458,7 @@ structure_ast parse_struct(lexer* const lex, pool* const mem, char* err){
 	structure_ast outer = {
 		.binding_v=pool_request(mem, sizeof(binding_ast)*MAX_MEMBERS),
 		.union_v=NULL,
+		.encoding=NULL,
 		.tag_v=NULL,
 		.binding_c=0,
 		.union_c=0
@@ -484,21 +485,46 @@ structure_ast parse_struct(lexer* const lex, pool* const mem, char* err){
 				return outer;
 			}
 			token open = parse_token(lex);
-			if (open.type != TOKEN_BRACE_OPEN){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected '{', for union data, found '%s'\n", lex->line, lex->col, open.string);
+			switch(open.type){
+			case TOKEN_BRACE_OPEN:
+				structure_ast s = parse_struct(lex, mem, err);
+				if (*err != 0){
+					return outer;
+				}
+				if (outer.union_c == 0){
+					outer.union_v = pool_request(mem, sizeof(structure_ast)*MAX_MEMBERS);
+					outer.encoding = pool_request(mem, sizeof(int64_t)*MAX_MEMBERS);
+					outer.tag_v = pool_request(mem, sizeof(token)*MAX_MEMBERS);
+					outer.encoding[0] = 0;
+				}
+				else{
+					outer.encoding[outer.union_c] = outer.encoding[outer.union_c-1]+1;
+				}
+				outer.union_v[outer.union_c] = s;
+				outer.tag_v[outer.union_c] = tok;
+				outer.union_c += 1;
+				token semi = parse_token(lex);
+				if (semi.type == TOKEN_SEMI){
+					break;
+				}
+				if (semi.type != TOKEN_SET){
+					snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected ';' to end union or '=' to set enumerated encoding, found '%s'\n", lex->line, lex->col, semi.string);
+					return outer;
+				}
+			case TOKEN_SET:
+				token encoding = parse_token(lex);
+				if (encoding.type != TOKEN_INTEGER){
+					snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected enumerator encoding, found '%s'\n", lex->line, lex->col, encoding.string);
+				}
+				token true_semi = parse_token(lex);
+				if (true_semi.type == TOKEN_SEMI){
+					outer.encoding[outer.union_c-1] = atoi(true_semi.string);
+					break;
+				}
+			default:
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected '{', for union data or '=' for enum encoding, found '%s'\n", lex->line, lex->col, open.string);
 				return outer;
 			}
-			structure_ast s = parse_struct(lex, mem, err);
-			if (*err != 0){
-				return outer;
-			}
-			if (outer.union_c == 0){
-				outer.union_v = pool_request(mem, sizeof(structure_ast)*MAX_MEMBERS);
-				outer.tag_v = pool_request(mem, sizeof(token)*MAX_MEMBERS);
-			}
-			outer.union_v[outer.union_c] = s;
-			outer.tag_v[outer.union_c] = tok;
-			outer.union_c += 1;
 		}
 		else{
 			tok = parse_token(lex);
@@ -1422,6 +1448,7 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 			return;
 		}
 	}
+}
 
 //TODO parametric types
 //TODO add constants, parametric constant buffer sizes
@@ -1434,13 +1461,10 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 //TODO char literals
 //TODO matches on enumerated struct union, maybe with @
 /* TODO semantic pass stuff
- * fill captures ?
- * lift closures
- * replace closure references
  * group function application into distinct calls for defined top level functions
  * create structures for partial application cases
 */
-}
+//TODO code generation
 
 type_ast roll_expression(
 	scope* const roll,

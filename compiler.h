@@ -150,6 +150,7 @@ struct structure_ast;
 typedef struct structure_ast{
 	struct binding_ast* binding_v;
 	struct structure_ast* union_v;
+	int64_t* encoding;
 	token* tag_v;
 	uint32_t binding_c;
 	uint32_t union_c;
