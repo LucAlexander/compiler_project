@@ -277,7 +277,8 @@ typedef struct expression_ast{
 		ACCESS_EXPRESSION,
 		LAMBDA_EXPRESSION,
 		RETURN_EXPRESSION,
-		REF_EXPRESSION
+		REF_EXPRESSION,
+		NOP_EXPRESSION
 	} tag;
 	union {
 		struct {

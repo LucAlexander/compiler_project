@@ -899,10 +899,13 @@ expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* e
 	expression_ast outer = {
 		.tag=BLOCK_EXPRESSION,
 		.data.block.type={.tag=NONE_TYPE},
-		.data.block.expr_c=1
+		.data.block.expr_c=0
 	};
 	outer.data.block.expr_v = pool_request(mem, MAX_ARGS*sizeof(expression_ast));
-	outer.data.block.expr_v[0] = first;
+	if (first.tag != NOP_EXPRESSION){
+		outer.data.block.expr_c = 1;
+		outer.data.block.expr_v[0] = first;
+	}
 	while(1){
 		expression_ast build = {
 			.tag=APPLICATION_EXPRESSION
@@ -953,8 +956,8 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 		};
 		literal_ast lit;
 		if (expr.type == end_token){
-			if (outer.data.block.expr_c == 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Blank expression terminated with '%s'\n", lex->line, lex->col, expr.string);
+			if (outer.data.block.expr_c == 0 && end_token == TOKEN_SEMI){
+				return parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block);
 			}
 			if (pass == 0){
 				return outer;
@@ -1209,6 +1212,10 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			break;
 		case TOKEN_SEMI:
 			if (allow_block == 1){
+				if (outer.data.block.expr_c == 0){
+					outer.tag = NOP_EXPRESSION;
+					return parse_block_expression(lex, mem, err, end_token, outer);
+				}
 				if (pass == 0){
 					return parse_block_expression(lex, mem, err, end_token, outer);
 				}
@@ -1453,23 +1460,25 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 	}
 }
 
-//TODO module system
-//TODO recursive assignment for non function oh no
-//TODO parametric types
-//TODO add constants, parametric constant buffer sizes
-//TODO revisit statement/statement expressions/branching/conditionals
-//TODO memory optimizations
-//TODO casting between types
-//TODO memory arena/pool builtin stuff
-//TODO fix type equality
-//TODO syntax for enumerations
-//TODO char literals
-//TODO matches on enumerated struct union, maybe with @
-/* TODO semantic pass stuff
- * group function application into distinct calls for defined top level functions
- * create structures for partial application cases
+/* TODO LIST
+
+	> matches on enumerated struct union, maybe with @
+	> module system
+	> parametric types
+	> add constants, parametric constant buffer sizes
+	> revisit statement/statement expressions/branching/conditionals
+	> memory optimizations
+	> casting between types
+	> memory arena/pool builtin stuff
+	> char literals
+	> Finish semantic pass stuff
+		> fix type equality
+		> semantic pass for structure/enum type stuff
+		> group function application into distinct calls for defined top level functions
+		> create structures for partial application cases
+	> code generation
+
 */
-//TODO code generation
 
 type_ast roll_expression(
 	scope* const roll,
