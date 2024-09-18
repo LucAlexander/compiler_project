@@ -1462,21 +1462,21 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 /* TODO LIST
 
-	> matches on enumerated struct union, maybe with @
-	> module system
-	> parametric types
-	> add constants, parametric constant buffer sizes
-	> revisit statement/statement expressions/branching/conditionals
-	> memory optimizations
-	> casting between types
-	> memory arena/pool builtin stuff
-	> char literals
-	> Finish semantic pass stuff
-		> fix type equality
-		> semantic pass for structure/enum type stuff
-		> group function application into distinct calls for defined top level functions
-		> create structures for partial application cases
-	> code generation
+	1 matches on enumerated struct union, maybe with @
+	2 module system
+	3 parametric types
+	4 add constants, parametric constant buffer sizes
+	5 revisit statement/statement expressions/branching/conditionals
+	6 memory optimizations
+	7 casting between types
+	8 memory arena/pool builtin stuff
+	9 char literals
+	10 Finish semantic pass stuff
+		1 fix type equality
+		2 semantic pass for structure/enum type stuff
+		3 group function application into distinct calls for defined top level functions
+		4 create structures for partial application cases
+	11 code generation
 
 */
 
@@ -1916,7 +1916,7 @@ type_ast roll_expression(
 				else if (access_full_type.tag == USER_TYPE){
 					type_ast lookup = resolve_type_or_alias(tree, access_full_type, err);
 					if (*err != 0){
-						return full_type;
+						return access_full_type;
 					}
 					if (lookup.tag != STRUCT_TYPE){
 						snprintf(err, ERROR_BUFFER, " [!] Target type binding for struct access does not resolve to structure\n");
@@ -1934,45 +1934,54 @@ type_ast roll_expression(
 				snprintf(err, ERROR_BUFFER, " [!] Expected structure member name\n");
 				return access_full_type;
 			}
-			for (uint32_t k = 0;k<target_struct.binding_c;++k){
-				binding_ast target_binding = target_struct.binding_v[k];
-				if (strncmp(term->data.binding.name.string, target_binding.name.string, TOKEN_MAX) == 0){
-					if (target_binding.type.tag == STRUCT_TYPE){
-						found = 1;
-						access_full_type = target_binding.type;
-						break;
-					}
-					else if (target_binding.type.tag == USER_TYPE){
-						type_ast resolved_type = resolve_type_or_alias(tree, target_binding.type, err);
-						if (*err != 0){
+			structure_ast* temp_struct = &target_struct;
+			uint32_t next_union = 0;
+			do {
+				for (uint32_t k = 0;k<temp_struct->binding_c;++k){
+					binding_ast target_binding = temp_struct->binding_v[k];
+					if (strncmp(term->data.binding.name.string, target_binding.name.string, TOKEN_MAX) == 0){
+						if (target_binding.type.tag == STRUCT_TYPE){
+							found = 1;
+							access_full_type = target_binding.type;
+							break;
+						}
+						else if (target_binding.type.tag == USER_TYPE){
+							type_ast resolved_type = resolve_type_or_alias(tree, target_binding.type, err);
+							if (*err != 0){
+								return access_full_type;
+							}
+							if (resolved_type.tag == STRUCT_TYPE){
+								if (access_index+1<apl->data.block.expr_c){
+									found = 1;
+									access_full_type = resolved_type;
+									break;
+								}
+								apl->data.block.type = target_binding.type;
+								return target_binding.type;
+							}
+						}
+						if ((access_index+1)<apl->data.block.expr_c){
+							snprintf(err, ERROR_BUFFER, " [!] Structure access resolved to a type but further arguments were given\n");
 							return access_full_type;
 						}
-						if (resolved_type.tag == STRUCT_TYPE){
-							if (access_index+1<apl->data.block.expr_c){
-								found = 1;
-								access_full_type = resolved_type;
-								break;
-							}
+						if (expected_type.tag == NONE_TYPE){
 							apl->data.block.type = target_binding.type;
 							return target_binding.type;
 						}
-					}
-					if ((access_index+1)<apl->data.block.expr_c){
-						snprintf(err, ERROR_BUFFER, " [!] Structure access resolved to a type but further arguments were given\n");
-						return access_full_type;
-					}
-					if (expected_type.tag == NONE_TYPE){
+						if (type_cmp(&expected_type, &target_binding.type, FOR_APPLICATION) != 0){
+							snprintf(err, ERROR_BUFFER, " [!] Structure access returned unexpected type\n");
+							return access_full_type;
+						}
 						apl->data.block.type = target_binding.type;
 						return target_binding.type;
 					}
-					if (type_cmp(&expected_type, &target_binding.type, FOR_APPLICATION) != 0){
-						snprintf(err, ERROR_BUFFER, " [!] Structure access returned unexpected type\n");
-						return access_full_type;
-					}
-					apl->data.block.type = target_binding.type;
-					return target_binding.type;
 				}
-			}
+				if (found != 0){
+					break;
+				}
+				temp_struct = &target_struct.union_v[next_union];
+				next_union += 1;
+			} while (next_union <= target_struct.union_c);
 			if (found == 0){
 				snprintf(err, ERROR_BUFFER, " [!] Unable to find structure member '%s'\n", term->data.binding.name.string);
 				return access_full_type;
@@ -1982,7 +1991,17 @@ type_ast roll_expression(
 			apl->data.block.type = access_full_type;
 			return access_full_type;
 		}
-		if (type_cmp(&expected_type, &full_type, FOR_APPLICATION) != 0){
+		if (expected_type.tag == USER_TYPE){
+			type_ast descended_type = resolve_type_or_alias(tree, expected_type, err);
+			if (*err != 0){
+				return descended_type;
+			}
+			if (type_cmp(&descended_type, &access_full_type, FOR_APPLICATION) != 0){
+				snprintf(err, ERROR_BUFFER, " [!] Expected user primitive type did not match structure access\n");
+				return descended_type;
+			}
+		}
+		else if (type_cmp(&expected_type, &access_full_type, FOR_APPLICATION) != 0){
 			snprintf(err, ERROR_BUFFER, " [!] Structure access returned unexpected type\n");
 			return access_full_type;
 		}
