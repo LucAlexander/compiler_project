@@ -750,7 +750,7 @@ function_ast parse_function(lexer* const lex, pool* const mem, token tok, char* 
 		}
 		enclosing = 1;
 	}
-	expression_ast expr = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_SEMI, 0);
+	expression_ast expr = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_SEMI, 0, -1);
 	if (expr.tag == APPLICATION_EXPRESSION && expr.data.block.expr_c == 1){
 		expr = expr.data.block.expr_v[0];
 	}
@@ -806,7 +806,7 @@ expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_
 			pool_load(mem);
 			*lex = copy;
 			*err = 0;
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACK_CLOSE, 1);
+			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACK_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -837,7 +837,7 @@ expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_
 			pool_load(mem);
 			*lex = copy;
 			*err = 0;
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACE_CLOSE, 1);
+			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACE_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -850,7 +850,7 @@ expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_
 			*outer.data.lambda.expression = access;
 			return outer;
 		case TOKEN_PAREN_OPEN:
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_PAREN_CLOSE, 1);
+			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_PAREN_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -905,6 +905,13 @@ function_ast try_function(lexer* const lex, pool* const mem, token expr, char* e
 	return func;
 }
 
+expression_ast unwrap_single_application(expression_ast single){
+	while (single.tag == APPLICATION_EXPRESSION && single.data.block.expr_c == 1){
+		single = single.data.block.expr_v[0];
+	}
+	return single;
+}
+
 expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, expression_ast first){
 	expression_ast outer = {
 		.tag=BLOCK_EXPRESSION,
@@ -912,6 +919,7 @@ expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* e
 		.data.block.expr_c=0
 	};
 	outer.data.block.expr_v = pool_request(mem, MAX_ARGS*sizeof(expression_ast));
+	first = unwrap_single_application(first);
 	if (first.tag != NOP_EXPRESSION){
 		outer.data.block.expr_c = 1;
 		outer.data.block.expr_v[0] = first;
@@ -924,10 +932,11 @@ expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* e
 		if (tok.type == end_token){
 			return outer;
 		}
-		build = parse_application_expression(lex, mem, tok, err, TOKEN_SEMI, 2);
+		build = parse_application_expression(lex, mem, tok, err, TOKEN_SEMI, 2, -1);
 		if (*err != 0){
 			return outer;
 		}
+		build = unwrap_single_application(build);
 		outer.data.block.expr_v[outer.data.block.expr_c] = build;
 		outer.data.block.expr_c += 1;
 	}
@@ -935,7 +944,7 @@ expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* e
 	return outer;
 }
 
-expression_ast parse_application_expression(lexer* const lex, pool* const mem, token expr, char* err, TOKEN_TYPE_TAG end_token, uint8_t allow_block){
+expression_ast parse_application_expression(lexer* const lex, pool* const mem, token expr, char* err, TOKEN_TYPE_TAG end_token, uint8_t allow_block, int8_t limit){
 	expression_ast outer = {
 		.tag=APPLICATION_EXPRESSION,
 		.data.block.type={.tag=NONE_TYPE},
@@ -961,13 +970,16 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 	expression_ast* last_pass;
 	uint8_t pass = 0;
 	while (1){
+		if (limit > 0){
+			limit -= 1;
+		}
 		expression_ast build = {
 			.tag=BINDING_EXPRESSION
 		};
 		literal_ast lit;
-		if (expr.type == end_token){
+		if (expr.type == end_token || limit == 0){
 			if (outer.data.block.expr_c == 0 && end_token == TOKEN_SEMI){
-				return parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block);
+				return parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block, -1);
 			}
 			if (pass == 0){
 				return outer;
@@ -987,7 +999,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			}
 			build.tag = RETURN_EXPRESSION;
 			build.data.deref = pool_request(mem, sizeof(expression_ast));
-			expression_ast retexpr = parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block);
+			expression_ast retexpr = parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1006,7 +1018,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 		case TOKEN_REF:
 			build.tag = REF_EXPRESSION;
 			build.data.deref = pool_request(mem, sizeof(expression_ast));
-			*build.data.deref = parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block);
+			*build.data.deref = parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1151,7 +1163,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			pool_load(mem);
 			*lex = copy;
 			*err = 0;
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACK_CLOSE, 1);
+			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACK_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1164,7 +1176,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_c += 1;
 			break;
 		case TOKEN_PAREN_OPEN:
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_PAREN_CLOSE, 1);
+			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_PAREN_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1190,7 +1202,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			pool_load(mem);
 			*lex = copy;
 			*err = 0;
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACE_CLOSE, 1);
+			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACE_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1213,8 +1225,8 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_c += 1;
 			break;
 		case TOKEN_IF:
-			build = parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block);
-			if (*err != 0){
+			build = parse_application_expression(lex, mem, parse_token(lex), err, end_token, 0, 3);
+			if (*err != 0) {
 				return outer;
 			}
 			if (build.data.block.expr_c < 2){
@@ -1225,32 +1237,25 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 				.tag=IF_STATEMENT,
 				.data.if_statement.predicate = pool_request(mem, sizeof(expression_ast)),
 				.data.if_statement.branch = pool_request(mem, sizeof(expression_ast)),
-				.data.if_statement.alternate = NULL
+				.data.if_statement.alternate = NULL,
+				.type.tag=NONE_TYPE
 			};
 			*iff.data.if_statement.predicate = build.data.block.expr_v[0];
 			*iff.data.if_statement.branch = build.data.block.expr_v[1];
-			if (build.data.block.expr_c >= 3){
+			if (build.data.block.expr_c == 3){
 				iff.data.if_statement.alternate = pool_request(mem, sizeof(expression_ast));
 				*iff.data.if_statement.alternate = build.data.block.expr_v[2];
 				build.data.block.expr_c -= 2;
-				for (uint32_t i = 1;i < build.data.block.expr_c;++i){
-					build.data.block.expr_v[i] = build.data.block.expr_v[i+2];
-				}
 			}
 			else{
 				build.data.block.expr_c -= 1;
 			}
-			build.data.block.expr_v[0].tag = STATEMENT_EXPRESSION;
-			build.data.block.expr_v[0].data.statement = iff;
-			build.data.block.type.tag=NONE_TYPE;
+			build.tag = STATEMENT_EXPRESSION;
+			build.data.statement = iff;
+			build.data.statement.type.tag=NONE_TYPE;
 			outer.data.block.expr_v[outer.data.block.expr_c] = build;
 			outer.data.block.expr_c += 1;
-			if (pass == 0){
-				return outer;
-			}
-			last_pass->data.block.expr_v[last_pass->data.block.expr_c] = outer;
-			last_pass->data.block.expr_c += 1;
-			return pass_expression;
+			break;
 		case TOKEN_SEMI:
 			if (allow_block == 1){
 				if (outer.data.block.expr_c == 0){
@@ -1270,7 +1275,9 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unexpected token '%s'\n", lex->line, lex->col, expr.string);
 			return outer;
 		}
-		expr = parse_token(lex);
+		if (limit != 1){
+			expr = parse_token(lex);
+		}
 	}
 	snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u How did you get here in the application parser\n", lex->line, lex->col);
 	return outer;
@@ -1288,7 +1295,7 @@ literal_ast parse_struct_literal(lexer* const lex, pool* const mem, char* err){
 		return lit;
 	}
 	lit.data.array.member_v = pool_request(mem, MAX_ARGS*sizeof(expression_ast));
-	expression_ast build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0);
+	expression_ast build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0, -1);
 	if (*err != 0){
 		return lit;
 	}
@@ -1303,7 +1310,7 @@ literal_ast parse_struct_literal(lexer* const lex, pool* const mem, char* err){
 		save = ftell(lex->fd);
 		pool_save(mem);
 		lexer copy = *lex;
-		expression_ast build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0);
+		expression_ast build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0, -1);
 		if (*err == 0){
 			lit.data.array.member_v[lit.data.array.member_c] = build;
 			lit.data.array.member_c += 1;
@@ -1317,7 +1324,7 @@ literal_ast parse_struct_literal(lexer* const lex, pool* const mem, char* err){
 		pool_load(mem);
 		*lex = copy;
 		*err = 0;
-		build = parse_application_expression(lex, mem, tok, err, TOKEN_BRACE_CLOSE, 0);
+		build = parse_application_expression(lex, mem, tok, err, TOKEN_BRACE_CLOSE, 0, -1);
 		if (*err != 0){
 			return lit;
 		}
@@ -1339,7 +1346,7 @@ literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err){
 		return lit;
 	}
 	lit.data.array.member_v = pool_request(mem, MAX_ARGS*sizeof(expression_ast));
-	expression_ast build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0);
+	expression_ast build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0, -1);
 	if (*err != 0){
 		return lit;
 	}
@@ -1354,7 +1361,7 @@ literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err){
 		save = ftell(lex->fd);
 		pool_save(mem);
 		lexer copy = *lex;
-		build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0);
+		build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0, -1);
 		if (*err == 0){
 			lit.data.array.member_v[lit.data.array.member_c] = build;
 			lit.data.array.member_c += 1;
@@ -1368,7 +1375,7 @@ literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err){
 		pool_load(mem);
 		*lex = copy;
 		*err = 0;
-		build = parse_application_expression(lex, mem, tok, err, TOKEN_BRACK_CLOSE, 0);
+		build = parse_application_expression(lex, mem, tok, err, TOKEN_BRACK_CLOSE, 0, -1);
 		if (*err != 0){
 			return lit;
 		}
@@ -1400,7 +1407,7 @@ expression_ast parse_if(lexer* const lex, pool* const mem, char* err){
 	expression_ast branch;
 	if (tok.type == TOKEN_PAREN_OPEN){
 		predicate = parse_application_expression(lex, mem, parse_token(lex),
-		                                         err, TOKEN_PAREN_CLOSE, 0);
+		                                         err, TOKEN_PAREN_CLOSE, 0, -1);
 		if (*err != 0){
 			return predicate;
 		}
@@ -1410,16 +1417,16 @@ expression_ast parse_if(lexer* const lex, pool* const mem, char* err){
 			return predicate;
 		}
 		branch = parse_application_expression(lex, mem, parse_token(lex),
-		                                      err, TOKEN_PAREN_CLOSE, 1);
+		                                      err, TOKEN_PAREN_CLOSE, 1, -1);
 	}
 	else{
 		predicate = parse_application_expression(lex, mem, tok, err,
-		                                         TOKEN_PAREN_OPEN, 0);
+		                                         TOKEN_PAREN_OPEN, 0, -1);
 		if (*err != 0){
 			return predicate;
 		}
 		branch = parse_application_expression(lex, mem, parse_token(lex),
-		                                      err, TOKEN_PAREN_CLOSE, 1);
+		                                      err, TOKEN_PAREN_CLOSE, 1, -1);
 	}
 	if (*err != 0){
 		return branch;
@@ -1437,7 +1444,7 @@ expression_ast parse_if(lexer* const lex, pool* const mem, char* err){
 		else if (par.type == TOKEN_PAREN_OPEN){
 			alternate = parse_application_expression(lex, mem,
 			                                         parse_token(lex), err,
-													 TOKEN_PAREN_CLOSE, 1);
+													 TOKEN_PAREN_CLOSE, 1, -1);
 		}
 		if (*err != 0){
 			return alternate;
@@ -1513,7 +1520,10 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 	2 module system
 	3 parametric types
 	4 add constants, parametric constant buffer sizes
-	5 revisit statement/statement expressions/branching/conditionals
+	5 revisit statement/statement expressions/branching/conditionals (as procedures)
+		1 if
+		2 for
+		3 each
 	6 memory optimizations
 	7 casting between types
 	8 memory arena/pool builtin stuff
@@ -1526,6 +1536,26 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 	11 code generation
 
 */
+void handle_procedural_statement(scope* const roll, ast* const tree, pool* const mem, expression_ast* const line, type_ast expected_type, char* const err){
+	if (expected_type.tag == PROCEDURE_TYPE){
+		expected_type = *expected_type.data.pointer;
+	}
+	type_ast statement_return = roll_statement_expression(roll, tree, mem, &line->data.statement, expected_type, 0, err);
+	if (*err != 0){
+		pop_frame(roll);
+		return;
+	}
+	if (statement_return.tag != PROCEDURE_TYPE){
+		pop_frame(roll);
+		snprintf(err, ERROR_BUFFER, " [!] Statement in block did not invoke procedure\n");
+		return;
+	}
+	if (type_cmp(&expected_type, statement_return.data.pointer, FOR_APPLICATION) != 0){
+		pop_frame(roll);
+		snprintf(err, ERROR_BUFFER, " [!] Statement expression branch returned incorrect type to root block\n");
+		return;
+	}
+}
 
 type_ast roll_expression(
 	scope* const roll,
@@ -1561,23 +1591,11 @@ type_ast roll_expression(
 		expression_ast* line;
 		for (;i<expr->data.block.expr_c-1;++i){
 			line = &expr->data.block.expr_v[i];
-			if (line->tag == APPLICATION_EXPRESSION
-			 && line->data.block.expr_v[0].tag == STATEMENT_EXPRESSION
-			 && line->data.block.expr_c == 1){
-				type_ast statement_return = roll_statement_expression(roll, tree, mem, &line->data.block.expr_v[0].data.statement, expected_type, 0, err);
+			if (line->tag == STATEMENT_EXPRESSION) {
+				handle_procedural_statement(roll, tree, mem, line, expected_type, err);
 				if (*err != 0){
-					pop_frame(roll);
 					return expected_type;
 				}
-				if (statement_return.tag == NONE_TYPE){
-					continue;
-				}
-				if (type_cmp(&expected_type, &statement_return, FOR_APPLICATION) != 0){
-					pop_frame(roll);
-					snprintf(err, ERROR_BUFFER, " [!] Statement expression branch returned incorrect type to root block\n");
-					return expected_type;
-				}
-				line->data.block.type = statement_return;
 			}
 			roll_expression(roll, tree, mem, line, infer, 0, NULL, 0, err);
 			if (*err != 0){
@@ -1586,36 +1604,39 @@ type_ast roll_expression(
 			}
 		}
 		line = &expr->data.block.expr_v[i];
-		if (line->tag != APPLICATION_EXPRESSION || line->data.block.expr_v[0].tag != RETURN_EXPRESSION){
-			if (expected_type.tag == PROCEDURE_TYPE){
-				roll_expression(roll, tree, mem, line, infer, 0, NULL, 0, err);
-				pop_frame(roll);
-				expr->data.block.type = expected_type;
-				return expected_type;
+		if ((line->tag != RETURN_EXPRESSION) && (expected_type.tag == PROCEDURE_TYPE)){
+			if (line->tag == STATEMENT_EXPRESSION){
+				handle_procedural_statement(roll, tree, mem, line, expected_type, err);
+				if (*err != 0){
+					return expected_type;
+				}
 			}
+			else{
+				roll_expression(roll, tree, mem, line, infer, 0, NULL, 0, err);
+			}
+			pop_frame(roll);
+			expr->data.block.type = expected_type;
+			return expected_type;
 		}
 		type_ast filled_type;
 		if (expected_type.tag == PROCEDURE_TYPE){
-			filled_type = roll_expression(roll, tree, mem, &line->data.block.expr_v[0], *expected_type.data.pointer, 0, NULL, 0, err);
+			filled_type = roll_expression(roll, tree, mem, line->data.deref, *expected_type.data.pointer, 0, NULL, 0, err);
 			pop_frame(roll);
 			if (*err != 0){
 				return filled_type;
 			}
-			line->data.block.type = expected_type;
 			expr->data.block.type = expected_type;
 			return expected_type;
 		}
-		filled_type = roll_expression(roll, tree, mem, &line->data.block.expr_v[0], expected_type, 0, NULL, 0, err);
+		filled_type = roll_expression(roll, tree, mem, line->data.deref, expected_type, 0, NULL, 0, err);
 		pop_frame(roll);
 		if (*err != 0){
 			return filled_type;
 		}
 		if (expected_type.tag == NONE_TYPE){
-			line->data.block.type = filled_type;
 			expr->data.block.type = filled_type;
 			return filled_type;
 		}
-		line->data.block.type = filled_type;
 		expr->data.block.type = filled_type;
 		return filled_type;
 
@@ -2451,12 +2472,15 @@ type_ast roll_statement_expression(
 	if (statement->type.tag != NONE_TYPE){
 		return statement->type;
 	}
-	type_ast infer = {
-		.tag = NONE_TYPE
-	};
 	switch (statement->tag){
 
 	case IF_STATEMENT:
+		if (as_expression == 0){
+			type_ast temp = expected_type;
+			expected_type.tag = PROCEDURE_TYPE;
+			expected_type.data.pointer = pool_request(mem, sizeof(type_ast));
+			*expected_type.data.pointer = temp;
+		}
 		type_ast pred = {
 			.tag=PRIMITIVE_TYPE,
 			.data.primitive=INT_ANY,
@@ -2474,50 +2498,20 @@ type_ast roll_statement_expression(
 		}
 		type_ast btype = roll_expression(roll, tree, mem, statement->data.if_statement.branch, expected_type, 0, NULL, 0, err);
 		if (*err != 0){
-			if (as_expression == 0 && expected_type.tag != NONE_TYPE){
-				*err = 0;
-				btype = roll_expression(roll, tree, mem, statement->data.if_statement.branch, infer, 0, NULL, 0, err);
-				if (*err != 0){
-					return expected_type;
-				}
-			}
-			else{
-				return expected_type;
-			}
+			return expected_type;
 		}
 		if (statement->data.if_statement.alternate == NULL){
 			if (as_expression == 0){
-				statement->type = btype;
-				return btype;
+				return expected_type;
 			}
 			snprintf(err, ERROR_BUFFER, " [!] Expression conditional statement must have alternate branch\n");
 			return expected_type;
 		}
-		//TODO explicitly check if new if statement
 		type_ast atype = roll_expression(roll, tree, mem, statement->data.if_statement.alternate, expected_type, 0, NULL, 0, err);
 		if (*err != 0){
-			if (as_expression == 0 && expected_type.tag != NONE_TYPE){
-				*err = 0;
-				atype = roll_expression(roll, tree, mem, statement->data.if_statement.alternate, infer, 0, NULL, 0, err);
-				if (*err != 0){
-					return expected_type;
-				}
-			}
-			else{
-				return expected_type;
-			}
+			return expected_type;
 		}
 		if (type_cmp(&btype, &atype, FOR_EQUALITY) != 0){
-			if (as_expression == 0){
-				if (btype.tag == NONE_TYPE){
-					statement->type = btype;
-					return btype;
-				}
-				if (atype.tag == NONE_TYPE){
-					statement->type = atype;
-					return atype;
-				}
-			}
 			snprintf(err, ERROR_BUFFER, " [!] branch and alternate types in conditional statement expression do not match\n");
 			return expected_type;
 		}
