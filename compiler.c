@@ -201,7 +201,8 @@ uint32_t identifier_subtype(uint32_t type_index, char* const content){
 	if (strncmp(content, "type", TOKEN_MAX) == 0){ return TOKEN_TYPE; }
 	if (strncmp(content, "alias", TOKEN_MAX) == 0){ return TOKEN_ALIAS; }
 	if (strncmp(content, "mut", TOKEN_MAX) == 0){ return TOKEN_MUTABLE; }
-	if (strncmp(content, "ref", TOKEN_REF) == 0){ return TOKEN_REF; }
+	if (strncmp(content, "ref", TOKEN_MAX) == 0){ return TOKEN_REF; }
+	if (strncmp(content, "proc", TOKEN_MAX) == 0){ return TOKEN_PROC; }
 	return type_index;
 }
 
@@ -624,6 +625,15 @@ type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TO
 	case TOKEN_F64:
 		outer.tag=PRIMITIVE_TYPE;
 		outer.data.primitive=F64_TYPE;
+		break;
+	case TOKEN_PROC:
+		outer.tag=PROCEDURE_TYPE;
+		type_ast procedure_optional = parse_type(lex, mem, err, parse_token(lex), end_token, 0);
+		if (*err != 0){
+			return outer;
+		}
+		outer.data.pointer = pool_request(mem, sizeof(type_ast));
+		*outer.data.pointer = procedure_optional;
 		break;
 	default:
 		if (name.type!=TOKEN_IDENTIFIER){
@@ -1203,13 +1213,44 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_c += 1;
 			break;
 		case TOKEN_IF:
-			build = parse_if(lex, mem, err);
+			build = parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block);
 			if (*err != 0){
 				return outer;
 			}
+			if (build.data.block.expr_c < 2){
+				snprintf(err, ERROR_BUFFER, " <!> Parser Error %u:%u Require at least one consequent for if special form\n", lex->line, lex->col);
+				return outer;
+			}
+			statement_ast iff = {
+				.tag=IF_STATEMENT,
+				.data.if_statement.predicate = pool_request(mem, sizeof(expression_ast)),
+				.data.if_statement.branch = pool_request(mem, sizeof(expression_ast)),
+				.data.if_statement.alternate = NULL
+			};
+			*iff.data.if_statement.predicate = build.data.block.expr_v[0];
+			*iff.data.if_statement.branch = build.data.block.expr_v[1];
+			if (build.data.block.expr_c >= 3){
+				iff.data.if_statement.alternate = pool_request(mem, sizeof(expression_ast));
+				*iff.data.if_statement.alternate = build.data.block.expr_v[2];
+				build.data.block.expr_c -= 2;
+				for (uint32_t i = 1;i < build.data.block.expr_c;++i){
+					build.data.block.expr_v[i] = build.data.block.expr_v[i+2];
+				}
+			}
+			else{
+				build.data.block.expr_c -= 1;
+			}
+			build.data.block.expr_v[0].tag = STATEMENT_EXPRESSION;
+			build.data.block.expr_v[0].data.statement = iff;
+			build.data.block.type.tag=NONE_TYPE;
 			outer.data.block.expr_v[outer.data.block.expr_c] = build;
 			outer.data.block.expr_c += 1;
-			break;
+			if (pass == 0){
+				return outer;
+			}
+			last_pass->data.block.expr_v[last_pass->data.block.expr_c] = outer;
+			last_pass->data.block.expr_c += 1;
+			return pass_expression;
 		case TOKEN_SEMI:
 			if (allow_block == 1){
 				if (outer.data.block.expr_c == 0){
@@ -1358,7 +1399,8 @@ expression_ast parse_if(lexer* const lex, pool* const mem, char* err){
 	expression_ast predicate;
 	expression_ast branch;
 	if (tok.type == TOKEN_PAREN_OPEN){
-		predicate = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_PAREN_CLOSE, 0);
+		predicate = parse_application_expression(lex, mem, parse_token(lex),
+		                                         err, TOKEN_PAREN_CLOSE, 0);
 		if (*err != 0){
 			return predicate;
 		}
@@ -1367,14 +1409,17 @@ expression_ast parse_if(lexer* const lex, pool* const mem, char* err){
 			snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u Expected blockable expression token '(', found '%s'\n", lex->line, lex->col, tok.string);
 			return predicate;
 		}
-		branch = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_PAREN_CLOSE, 1);
+		branch = parse_application_expression(lex, mem, parse_token(lex),
+		                                      err, TOKEN_PAREN_CLOSE, 1);
 	}
 	else{
-		predicate = parse_application_expression(lex, mem, tok, err, TOKEN_PAREN_OPEN, 0);
+		predicate = parse_application_expression(lex, mem, tok, err,
+		                                         TOKEN_PAREN_OPEN, 0);
 		if (*err != 0){
 			return predicate;
 		}
-		branch = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_PAREN_CLOSE, 1);
+		branch = parse_application_expression(lex, mem, parse_token(lex),
+		                                      err, TOKEN_PAREN_CLOSE, 1);
 	}
 	if (*err != 0){
 		return branch;
@@ -1390,7 +1435,9 @@ expression_ast parse_if(lexer* const lex, pool* const mem, char* err){
 			alternate = parse_if(lex, mem, err);
 		}
 		else if (par.type == TOKEN_PAREN_OPEN){
-			alternate = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_PAREN_CLOSE, 1);
+			alternate = parse_application_expression(lex, mem,
+			                                         parse_token(lex), err,
+													 TOKEN_PAREN_CLOSE, 1);
 		}
 		if (*err != 0){
 			return alternate;
@@ -1540,17 +1587,25 @@ type_ast roll_expression(
 		}
 		line = &expr->data.block.expr_v[i];
 		if (line->tag != APPLICATION_EXPRESSION || line->data.block.expr_v[0].tag != RETURN_EXPRESSION){
-			if (expected_type.tag != NONE_TYPE){
+			if (expected_type.tag == PROCEDURE_TYPE){
+				roll_expression(roll, tree, mem, line, infer, 0, NULL, 0, err);
 				pop_frame(roll);
-				snprintf(err, ERROR_BUFFER, " [!] Block expression expected return\n");
+				expr->data.block.type = expected_type;
 				return expected_type;
 			}
-			roll_expression(roll, tree, mem, line, infer, 0, NULL, 0, err);
+		}
+		type_ast filled_type;
+		if (expected_type.tag == PROCEDURE_TYPE){
+			filled_type = roll_expression(roll, tree, mem, &line->data.block.expr_v[0], *expected_type.data.pointer, 0, NULL, 0, err);
 			pop_frame(roll);
+			if (*err != 0){
+				return filled_type;
+			}
+			line->data.block.type = expected_type;
 			expr->data.block.type = expected_type;
 			return expected_type;
 		}
-		type_ast filled_type = roll_expression(roll, tree, mem, &line->data.block.expr_v[0], expected_type, 0, NULL, 0, err);
+		filled_type = roll_expression(roll, tree, mem, &line->data.block.expr_v[0], expected_type, 0, NULL, 0, err);
 		pop_frame(roll);
 		if (*err != 0){
 			return filled_type;
@@ -1558,10 +1613,6 @@ type_ast roll_expression(
 		if (expected_type.tag == NONE_TYPE){
 			line->data.block.type = filled_type;
 			expr->data.block.type = filled_type;
-			return filled_type;
-		}
-		if (type_cmp(&expected_type, &filled_type, FOR_APPLICATION) != 0){
-			snprintf(err, ERROR_BUFFER, " [!] Block expression returned unexpected type\n");
 			return filled_type;
 		}
 		line->data.block.type = filled_type;
@@ -2338,6 +2389,7 @@ uint8_t type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose)
 			return 0;
 		}
 		return (a->data.primitive != b->data.primitive);//TODO this might need more nuance
+	case PROCEDURE_TYPE:
 	case POINTER_TYPE:
 		return type_cmp(a->data.pointer, b->data.pointer, FOR_EQUALITY);
 	case BUFFER_TYPE:
@@ -2865,6 +2917,10 @@ void show_type(const type_ast* const type){
 		show_type(type->data.buffer.base);
 		printf("\033[1;36m) \033[0m");
 		break;
+	case PROCEDURE_TYPE:
+		printf("\033[1;36m procedure \033[0m");
+		show_type(type->data.pointer);
+		break;
 	case POINTER_TYPE:
 		show_type(type->data.pointer);
 		printf("\033[1;36m* \033[0m");
@@ -2942,7 +2998,7 @@ void show_statement(const statement_ast* const statement, uint8_t indent){
 	case IF_STATEMENT:
 		printf("\033[1;31mif \033[0m");
 		show_expression(statement->data.if_statement.predicate, indent);
-		printf("\033[1;31mthen\n\033[0m");
+		printf("\033[1;31mthen \033[0m");
 		show_expression(statement->data.if_statement.branch, indent+1);
 		if (statement->data.if_statement.alternate != NULL){
 			printf("\033[1;31melse \033[0m");

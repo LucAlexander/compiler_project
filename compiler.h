@@ -98,6 +98,7 @@ typedef enum TOKEN_TYPES {
 	TOKEN_TYPE,
 	TOKEN_ALIAS,
 	TOKEN_MUTABLE,
+	TOKEN_PROC,
 	TOKEN_EOF
 } TOKEN_TYPE_TAG;
 
@@ -182,6 +183,7 @@ typedef struct type_ast {
 		BUFFER_TYPE,
 		USER_TYPE,
 		STRUCT_TYPE,
+		PROCEDURE_TYPE,
 		NONE_TYPE
 	} tag;
 	union {
@@ -190,7 +192,7 @@ typedef struct type_ast {
 			struct type_ast* right;
 		} function;
 		PRIMITIVE_TAGS primitive;
-		struct type_ast* pointer;
+		struct type_ast* pointer; // also used for procedure
 		structure_ast* structure;
 		token user;
 		struct {
