@@ -348,7 +348,6 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, expression_ast first);
 expression_ast unwrap_single_application(expression_ast single);
 function_ast try_function(lexer* const lex, pool* const mem, token expr, char* err);
-expression_ast parse_if(lexer* const lex, pool* const mem, char* err);
 structure_ast parse_struct(lexer* const lex, pool* const mem, char* err);
 literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err);
 literal_ast parse_string_literal(lexer* const lex, pool* const mem, char* err);

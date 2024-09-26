@@ -924,6 +924,9 @@ expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* e
 		outer.data.block.expr_c = 1;
 		outer.data.block.expr_v[0] = first;
 	}
+	if (first.tag == RETURN_EXPRESSION){
+		return outer;
+	}
 	while(1){
 		expression_ast build = {
 			.tag=APPLICATION_EXPRESSION
@@ -969,18 +972,49 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 	expression_ast pass_expression;
 	expression_ast* last_pass;
 	uint8_t pass = 0;
-	while (1){
-		if (limit > 0){
-			limit -= 1;
+	uint64_t limit_save;
+	lexer limit_copy;
+	if (limit != -1){
+		if (allow_block != 0){
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Assertion error %u:%u blocks cannot be allowed when applications are limit requested\n", lex->line, lex->col);
+			return outer;
 		}
+		limit_save = ftell(lex->fd);
+		pool_save(mem);
+		limit_copy = *lex;
+		expr = parse_token(lex);
+	}
+	while (1){
 		expression_ast build = {
 			.tag=BINDING_EXPRESSION
 		};
 		literal_ast lit;
-		if (expr.type == end_token || limit == 0){
+		if (expr.type == end_token){
+			if (limit != -1){
+				if (fseek(lex->fd, limit_save, SEEK_SET) != 0){
+					snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing limited application expression\n", lex->line, lex->col);
+					return outer;
+				}
+				pool_load(mem);
+				*lex = limit_copy;
+			}
 			if (outer.data.block.expr_c == 0 && end_token == TOKEN_SEMI){
 				return parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block, -1);
 			}
+			if (pass == 0){
+				return outer;
+			}
+			last_pass->data.block.expr_v[last_pass->data.block.expr_c] = outer;
+			last_pass->data.block.expr_c += 1;
+			return pass_expression;
+		}
+		if (limit == 0 || (limit != -1 && expr.type == TOKEN_SEMI)){
+			if (fseek(lex->fd, limit_save, SEEK_SET) != 0){
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing limited application expression\n", lex->line, lex->col);
+				return outer;
+			}
+			pool_load(mem);
+			*lex = limit_copy;
 			if (pass == 0){
 				return outer;
 			}
@@ -1005,6 +1039,15 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			}
 			if (allow_block == 1 && retexpr.tag == BLOCK_EXPRESSION && retexpr.data.block.expr_c == 1){
 				retexpr.tag = APPLICATION_EXPRESSION;
+				*build.data.deref = retexpr;
+				outer.data.block.expr_v[outer.data.block.expr_c] = build;
+				outer.data.block.expr_c += 1;
+				if (pass == 0){
+					return parse_block_expression(lex, mem, err, end_token, outer);
+				}
+				last_pass->data.block.expr_v[last_pass->data.block.expr_c] = outer;
+				last_pass->data.block.expr_c += 1;
+				return parse_block_expression(lex, mem, err, end_token, pass_expression);
 			}
 			*build.data.deref = retexpr;
 			outer.data.block.expr_v[outer.data.block.expr_c] = build;
@@ -1225,8 +1268,8 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_c += 1;
 			break;
 		case TOKEN_IF:
-			build = parse_application_expression(lex, mem, parse_token(lex), err, end_token, 0, 3);
-			if (*err != 0) {
+			build = parse_application_expression(lex, mem, expr, err, end_token, 0, 3);
+			if (*err != 0){
 				return outer;
 			}
 			if (build.data.block.expr_c < 2){
@@ -1245,10 +1288,6 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			if (build.data.block.expr_c == 3){
 				iff.data.if_statement.alternate = pool_request(mem, sizeof(expression_ast));
 				*iff.data.if_statement.alternate = build.data.block.expr_v[2];
-				build.data.block.expr_c -= 2;
-			}
-			else{
-				build.data.block.expr_c -= 1;
 			}
 			build.tag = STATEMENT_EXPRESSION;
 			build.data.statement = iff;
@@ -1275,9 +1314,15 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unexpected token '%s'\n", lex->line, lex->col, expr.string);
 			return outer;
 		}
-		if (limit != 1){
-			expr = parse_token(lex);
+		if (limit != -1){
+			limit_save = ftell(lex->fd);
+			pool_save(mem);
+			limit_copy = *lex;
+			if (limit > 0){
+				limit -= 1;
+			}
 		}
+		expr = parse_token(lex);
 	}
 	snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u How did you get here in the application parser\n", lex->line, lex->col);
 	return outer;
@@ -1401,90 +1446,6 @@ literal_ast parse_string_literal(lexer* const lex, pool* const mem, char* err){
 	return lit;
 }
 
-expression_ast parse_if(lexer* const lex, pool* const mem, char* err){
-	token tok = parse_token(lex);
-	expression_ast predicate;
-	expression_ast branch;
-	if (tok.type == TOKEN_PAREN_OPEN){
-		predicate = parse_application_expression(lex, mem, parse_token(lex),
-		                                         err, TOKEN_PAREN_CLOSE, 0, -1);
-		if (*err != 0){
-			return predicate;
-		}
-		tok = parse_token(lex);
-		if (tok.type != TOKEN_PAREN_OPEN){
-			snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u Expected blockable expression token '(', found '%s'\n", lex->line, lex->col, tok.string);
-			return predicate;
-		}
-		branch = parse_application_expression(lex, mem, parse_token(lex),
-		                                      err, TOKEN_PAREN_CLOSE, 1, -1);
-	}
-	else{
-		predicate = parse_application_expression(lex, mem, tok, err,
-		                                         TOKEN_PAREN_OPEN, 0, -1);
-		if (*err != 0){
-			return predicate;
-		}
-		branch = parse_application_expression(lex, mem, parse_token(lex),
-		                                      err, TOKEN_PAREN_CLOSE, 1, -1);
-	}
-	if (*err != 0){
-		return branch;
-	}
-	uint64_t save = ftell(lex->fd);
-	pool_save(mem);
-	lexer copy = *lex;
-	tok = parse_token(lex);
-	token par = parse_token(lex);
-	if (tok.type == TOKEN_ELSE){
-		expression_ast alternate;
-		if (par.type == TOKEN_IF){
-			alternate = parse_if(lex, mem, err);
-		}
-		else if (par.type == TOKEN_PAREN_OPEN){
-			alternate = parse_application_expression(lex, mem,
-			                                         parse_token(lex), err,
-													 TOKEN_PAREN_CLOSE, 1, -1);
-		}
-		if (*err != 0){
-			return alternate;
-		}
-		expression_ast ifxpr = {
-			.tag=STATEMENT_EXPRESSION,
-			.data.statement={
-				.tag=IF_STATEMENT,
-				.type.tag=NONE_TYPE
-			}
-		};
-		ifxpr.data.statement.data.if_statement.predicate = pool_request(mem, sizeof(expression_ast));
-		ifxpr.data.statement.data.if_statement.branch = pool_request(mem, sizeof(expression_ast));
-		ifxpr.data.statement.data.if_statement.alternate = pool_request(mem, sizeof(expression_ast));
-		*ifxpr.data.statement.data.if_statement.predicate = predicate;
-		*ifxpr.data.statement.data.if_statement.branch = branch;
-		*ifxpr.data.statement.data.if_statement.alternate = alternate;
-		return ifxpr;
-	}
-	expression_ast ifxpr = {
-		.tag=STATEMENT_EXPRESSION,
-		.data.statement={
-			.tag=IF_STATEMENT,
-			.type.tag=NONE_TYPE
-		}
-	};
-	if (fseek(lex->fd, save, SEEK_SET) != 0){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack after parsing type\n", lex->line, lex->col);
-		return ifxpr;
-	}
-	pool_load(mem);
-	*lex = copy;
-	ifxpr.data.statement.data.if_statement.predicate = pool_request(mem, sizeof(expression_ast));
-	ifxpr.data.statement.data.if_statement.branch = pool_request(mem, sizeof(expression_ast));
-	ifxpr.data.statement.data.if_statement.alternate = NULL;
-	*ifxpr.data.statement.data.if_statement.predicate = predicate;
-	*ifxpr.data.statement.data.if_statement.branch = branch;
-	return ifxpr;
-}
-
 void push_frame(scope* const s){
 	s->frame_stack[s->frame_count] = s->binding_count;
 	s->frame_count += 1;
@@ -1516,14 +1477,12 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 /* TODO LIST
 
+   	0 procedures cannot be pointed to, mutated or stored
 	1 matches on enumerated struct union, maybe with @
 	2 module system
 	3 parametric types
 	4 add constants, parametric constant buffer sizes
 	5 revisit statement/statement expressions/branching/conditionals (as procedures)
-		1 if
-		2 for
-		3 each
 	6 memory optimizations
 	7 casting between types
 	8 memory arena/pool builtin stuff
@@ -1594,8 +1553,10 @@ type_ast roll_expression(
 			if (line->tag == STATEMENT_EXPRESSION) {
 				handle_procedural_statement(roll, tree, mem, line, expected_type, err);
 				if (*err != 0){
+					pop_frame(roll);
 					return expected_type;
 				}
+				continue;
 			}
 			roll_expression(roll, tree, mem, line, infer, 0, NULL, 0, err);
 			if (*err != 0){
