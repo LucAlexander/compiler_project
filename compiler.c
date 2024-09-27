@@ -2341,7 +2341,7 @@ type_ast apply_type(type_ast* const func, char* err){
 uint8_t type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose){
 	switch(purpose){
 	case FOR_MUTATION:
-		if (a->mut == 0){
+		if (a->mut == 0 || a->tag == PROCEDURE_TYPE){
 			return 1;
 		}
 		break;
