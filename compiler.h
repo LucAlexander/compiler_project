@@ -350,6 +350,7 @@ expression_ast unwrap_single_application(expression_ast single);
 function_ast try_function(lexer* const lex, pool* const mem, token expr, char* err);
 structure_ast parse_struct(lexer* const lex, pool* const mem, char* err);
 literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err);
+binding_ast parse_char_literal(lexer* const lex, pool* const mem, char* err);
 literal_ast parse_string_literal(lexer* const lex, pool* const mem, char* err);
 literal_ast parse_struct_literal(lexer* const lex, pool* const mem, char* err);
 

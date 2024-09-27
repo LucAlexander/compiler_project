@@ -1257,6 +1257,16 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_v[outer.data.block.expr_c] = access;
 			outer.data.block.expr_c += 1;
 			break;
+		case TOKEN_TICK:
+			binding_ast char_lit = parse_char_literal(lex, mem, err);
+			if (*err != 0){
+				return outer;
+			}
+			build.tag = VALUE_EXPRESSION;
+			build.data.binding = char_lit;
+			outer.data.block.expr_v[outer.data.block.expr_c] = build;
+			outer.data.block.expr_c += 1;
+			break;
 		case TOKEN_QUOTE:
 			lit = parse_string_literal(lex, mem, err);
 			if (*err != 0){
@@ -1432,6 +1442,29 @@ literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err){
 	return lit;
 }
 
+binding_ast parse_char_literal(lexer* const lex, pool* const mem, char* err){
+	//TODO excape sequences
+	token tok = parse_token(lex);
+	binding_ast char_lit = {.type.tag=NONE_TYPE};
+	if (tok.len != 2){
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected single character for character literal, found \"%s\"\n", lex->line, lex->col, tok.string);
+		return char_lit;
+	}
+	char target = tok.string[0];
+	snprintf(tok.string, 5, "%d", (int8_t)target);
+	tok.len = 3;
+	tok.type = TOKEN_INTEGER;
+	char_lit.type.tag=PRIMITIVE_TYPE;
+	char_lit.type.data.primitive=I8_TYPE;
+	char_lit.name=tok;
+	tok = parse_token(lex);
+	if (tok.type != TOKEN_TICK){
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected end of character literal token: (')\n", lex->line, lex->col);
+		return char_lit;
+	}
+	return char_lit;
+}
+
 literal_ast parse_string_literal(lexer* const lex, pool* const mem, char* err){
 	literal_ast lit = {
 		.tag=STRING_LITERAL,
@@ -1477,22 +1510,24 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 /* TODO LIST
 
-   	0 procedures cannot be pointed to, stored
-	1 matches on enumerated struct union, maybe with @
-	2 module system
-	3 parametric types
-	4 add constants, parametric constant buffer sizes
-	5 revisit statement/statement expressions/branching/conditionals (as procedures)
-	6 memory optimizations
-	7 casting between types
-	8 memory arena/pool builtin stuff
-	9 char literals
+	1 module system
+	2 parametric types
+	3 add constants, parametric constant buffer sizes
+	4 loops
+	5 memory optimizations
+		1 fix lost space in arena
+		2 make structs smaller
+	6 casting between types
+	7 memory arena/pool builtin stuff
+	8 matches on enumerated struct union, maybe with @
+	9 tagged break/continue that work with procedures
 	10 Finish semantic pass stuff
 		1 fix type equality
-		2 semantic pass for structure/enum type stuff
+		2 enum access with tag
 		3 group function application into distinct calls for defined top level functions
 		4 create structures for partial application cases
 	11 code generation
+	12 Good error system
 
 */
 void handle_procedural_statement(scope* const roll, ast* const tree, pool* const mem, expression_ast* const line, type_ast expected_type, char* const err){
