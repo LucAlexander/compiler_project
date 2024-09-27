@@ -1477,7 +1477,7 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 /* TODO LIST
 
-   	0 procedures cannot be pointed to, mutated or stored
+   	0 procedures cannot be pointed to, stored
 	1 matches on enumerated struct union, maybe with @
 	2 module system
 	3 parametric types
@@ -2548,6 +2548,10 @@ type_ast roll_literal_expression(
 			if (*err != 0){
 				return expected_type;
 			}
+			if (inner.tag == PROCEDURE_TYPE){
+				snprintf(err, ERROR_BUFFER, " [!] Procedures cannot be stored in data structures\n");
+				return expected_type;
+			}
 			index += 1;
 			for (;index<lit->data.array.member_c;++index){
 				expr = &lit->data.array.member_v[index];
@@ -2578,6 +2582,10 @@ type_ast roll_literal_expression(
 		}
 		else{
 			snprintf(err, ERROR_BUFFER, " [!] Array literal used where pointer or buffer was not expected\n");
+			return expected_type;
+		}
+		if (inner.tag == PROCEDURE_TYPE){
+			snprintf(err, ERROR_BUFFER, " [!] Procedures cannot be stored in data structures\n");
 			return expected_type;
 		}
 		for (uint32_t i = 0;i<lit->data.array.member_c;++i){
@@ -2651,9 +2659,13 @@ type_ast roll_literal_expression(
 				data_member = stack[nest_level];
 				target_struct = nest[nest_level];
 			}
-			roll_expression(roll, tree, mem, term, target_struct.binding_v[data_member].type, 0, NULL, 0, err);
+			type_ast member_deduced_type = roll_expression(roll, tree, mem, term, target_struct.binding_v[data_member].type, 0, NULL, 0, err);
 			if (*err != 0){
 				return infer;
+			}
+			if (member_deduced_type.tag == PROCEDURE_TYPE){
+				snprintf(err, ERROR_BUFFER, " [!] Procedures cannot be stored in data structures\n");
+				return expected_type;
 			}
 			data_member += 1;
 		}
