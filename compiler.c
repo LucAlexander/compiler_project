@@ -10,6 +10,7 @@
 MAP_IMPL(function_ast)
 MAP_IMPL(new_type_ast)
 MAP_IMPL(alias_ast)
+MAP_IMPL(constant_ast)
 
 token create_token(lexer* const lex){
 	uint32_t (*subtypes[TOKEN_TYPE_COUNT])(uint32_t, char* const) = {
@@ -200,9 +201,10 @@ uint32_t identifier_subtype(uint32_t type_index, char* const content){
 	if (strncmp(content, "f64", TOKEN_MAX) == 0){ return TOKEN_F64; }
 	if (strncmp(content, "type", TOKEN_MAX) == 0){ return TOKEN_TYPE; }
 	if (strncmp(content, "alias", TOKEN_MAX) == 0){ return TOKEN_ALIAS; }
-	if (strncmp(content, "mut", TOKEN_MAX) == 0){ return TOKEN_MUTABLE; }
-	if (strncmp(content, "ref", TOKEN_MAX) == 0){ return TOKEN_REF; }
-	if (strncmp(content, "proc", TOKEN_MAX) == 0){ return TOKEN_PROC; }
+	if (strncmp(content, "var", TOKEN_MAX) == 0){ return TOKEN_MUTABLE; }
+	if (strncmp(content, "ptr", TOKEN_MAX) == 0){ return TOKEN_REF; }
+	if (strncmp(content, "procedure", TOKEN_MAX) == 0){ return TOKEN_PROC; }
+	if (strncmp(content, "constant", TOKEN_MAX) == 0){ return TOKEN_CONST; }
 	return type_index;
 }
 
@@ -345,9 +347,11 @@ ast parse(FILE* fd, pool* const mem, char* err){
 		.func_c = 0,
 		.new_type_c = 0,
 		.alias_c = 0,
+		.const_c = 0,
 		.functions = function_ast_map_init(mem),
 		.types = new_type_ast_map_init(mem),
 		.aliases = alias_ast_map_init(mem),
+		.constants = constant_ast_map_init(mem),
 		.lifted_lambdas=0
 	};
 	// parse imports
@@ -374,6 +378,7 @@ ast parse(FILE* fd, pool* const mem, char* err){
 	tree.func_v = pool_request(mem, sizeof(function_ast)*MAX_FUNCTIONS) - (sizeof(token)*(MAX_IMPORTS - tree.import_c));
 	tree.new_type_v = pool_request(mem, sizeof(new_type_ast)*MAX_ALIASES);
 	tree.alias_v = pool_request(mem, sizeof(alias_ast)*MAX_ALIASES);
+	tree.const_v = pool_request(mem, sizeof(constant_ast)*MAX_ALIASES);
 	while (1){
 		if (tok.type == TOKEN_EOF){
 			return tree;
@@ -394,6 +399,9 @@ ast parse(FILE* fd, pool* const mem, char* err){
 			else if (alias_ast_map_access(&tree.aliases, tree.new_type_v[tree.new_type_c].name.string) != NULL){
 				snprintf(err, ERROR_BUFFER, " <!> Type '%s' defined prior as alias\n", tree.new_type_v[tree.new_type_c].name.string);
 			}
+			else if (constant_ast_map_access(&tree.constants, tree.new_type_v[tree.new_type_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Type '%s' defined prior as constant\n", tree.new_type_v[tree.new_type_c].name.string);
+			}
 			tree.new_type_c += 1;
 		}
 		else if (tok.type == TOKEN_ALIAS){
@@ -412,7 +420,31 @@ ast parse(FILE* fd, pool* const mem, char* err){
 			else if (new_type_ast_map_access(&tree.types, tree.alias_v[tree.alias_c].name.string) != NULL){
 				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined prior as type\n", tree.alias_v[tree.alias_c].name.string);
 			}
+			else if (constant_ast_map_access(&tree.constants, tree.alias_v[tree.alias_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined prior as constant\n", tree.alias_v[tree.alias_c].name.string);
+			}
 			tree.alias_c += 1;
+		}
+		else if (tok.type == TOKEN_CONST){
+			constant_ast cnst = parse_constant(&lex, mem, err);
+			if (*err != 0){
+				return tree;
+			}
+			tree.const_v[tree.const_c] = cnst;
+			uint8_t collision = constant_ast_map_insert(&tree.constants, tree.const_v[tree.const_c].name.string, &tree.const_v[tree.const_c]);
+			if (collision == 1){
+				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' was defined multiple times\n", tree.const_v[tree.const_c].name.string);
+			}
+			else if (function_ast_map_access(&tree.functions, tree.const_v[tree.const_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' defined prior as function\n", tree.const_v[tree.const_c].name.string);
+			}
+			else if (new_type_ast_map_access(&tree.types, tree.const_v[tree.const_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' defined prior as type\n", tree.const_v[tree.const_c].name.string);
+			}
+			else if (alias_ast_map_access(&tree.aliases, tree.const_v[tree.const_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' defined prior as alias\n", tree.const_v[tree.const_c].name.string);
+			}
+			tree.const_c += 1;
 		}
 		else{
 			function_ast f = parse_function(&lex, mem, tok, err, 0);
@@ -429,6 +461,9 @@ ast parse(FILE* fd, pool* const mem, char* err){
 			}
 			else if (alias_ast_map_access(&tree.aliases, tree.func_v[tree.func_c].name.string) != NULL){
 				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined prior as alias\n", tree.func_v[tree.func_c].name.string);
+			}
+			else if (constant_ast_map_access(&tree.constants, tree.func_v[tree.func_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined prior as constant\n", tree.func_v[tree.func_c].name.string);
 			}
 			tree.func_c += 1;
 		}
@@ -711,6 +746,48 @@ new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err){
 		.type=type,
 		.name=name
 	};
+}
+
+constant_ast parse_constant(lexer* const lex, pool* const mem, char* err){
+	token name = parse_token(lex);
+	constant_ast constant = {
+		.type.tag=PRIMITIVE_TYPE,
+		.type.data.primitive=INT_ANY
+	};
+	if (name.type != TOKEN_IDENTIFIER){
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected name for constant identifier\n", lex->line, lex->col);
+		return constant;
+	}
+	token eq = parse_token(lex);
+	if (eq.type != TOKEN_SET){
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected token '=' to set constant value\n", lex->line, lex->col);
+	}
+	token val = parse_token(lex);
+	switch (val.type){
+	case TOKEN_FLOAT:
+		constant.type=(type_ast){
+			.tag=PRIMITIVE_TYPE,
+			.data.primitive=FLOAT_ANY
+		};
+		constant.name=val;
+		break;
+	case TOKEN_INTEGER:
+		constant.type=(type_ast){
+			.tag=PRIMITIVE_TYPE,
+			.data.primitive=INT_ANY
+		};
+		constant.name=val;
+		break;
+	default:
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Constants can currently only evaluate to integers and floats, in the future this may just be turned into a compile time expression evaluation feature\n", lex->line, lex->col);
+		return constant;
+	}
+	token semi = parse_token(lex);
+	if (semi.type != TOKEN_SEMI){
+		snprintf(err, ERROR_BUFFER, " <!> Parsing ERror at %u:%u Constants definitions must end with token ';'\n", lex->line, lex->col);
+		return constant;
+	}
+	return constant;
 }
 
 alias_ast parse_alias(lexer* const lex, pool* const mem, char* err){
@@ -1512,7 +1589,7 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 	1 module system
 	2 parametric types
-	3 add constants, parametric constant buffer sizes
+	3 add constants, parametric constant buffer sizes < TODO current task
 	4 loops
 	5 memory optimizations
 		1 fix lost space in arena
@@ -2857,6 +2934,12 @@ void show_ast(const ast* const tree){
 		printf("\n");
 	}
 	printf("\n");
+	for (size_t i = 0;i<tree->const_c;++i){
+		printf("\033[1;34mconstant\033[0m ");
+		show_constant(&tree->const_v[i]);
+		printf("\n");
+	}
+	printf("\n");
 	for (size_t i = 0;i<tree->new_type_c;++i){
 		printf("\033[1;33mtype\033[0m ");
 		show_new_type(&tree->new_type_v[i]);
@@ -2987,7 +3070,7 @@ void show_type(const type_ast* const type){
 		break;
 	}
 	if (type->mut != 0){
-		printf("\033[1;36mMUT \033[0m");
+		printf("\033[1;36mVAR \033[0m");
 	}
 }
 
@@ -3104,7 +3187,7 @@ void show_expression(const expression_ast* const expr, uint8_t indent){
 		show_expression(expr->data.deref, indent);
 		break;
 	case REF_EXPRESSION:
-		printf("\033[1;31mref \033[0m");
+		printf("\033[1;31mptr \033[0m");
 		show_expression(expr->data.deref, indent);
 		break;
 	default:
@@ -3116,6 +3199,12 @@ void show_expression(const expression_ast* const expr, uint8_t indent){
 void show_new_type(const new_type_ast* const new_type){
 	show_type(&new_type->type);
 	show_token(&new_type->name);
+	printf("\n");
+}
+
+void show_constant(const constant_ast* const cnst){
+	show_type(&cnst->type);
+	show_token(&cnst->name);
 	printf("\n");
 }
 

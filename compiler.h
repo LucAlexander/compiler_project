@@ -99,6 +99,7 @@ typedef enum TOKEN_TYPES {
 	TOKEN_ALIAS,
 	TOKEN_MUTABLE,
 	TOKEN_PROC,
+	TOKEN_CONST,
 	TOKEN_EOF
 } TOKEN_TYPE_TAG;
 
@@ -216,7 +217,7 @@ uint8_t type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose)
 typedef struct binding_ast{
 	type_ast type;
 	token name;
-} binding_ast, new_type_ast, alias_ast;
+} binding_ast, new_type_ast, alias_ast, constant_ast;
 
 void show_binding(const binding_ast* const binding);
 
@@ -305,9 +306,11 @@ void show_expression(const expression_ast* const expr, uint8_t indent);
 
 MAP_DEF(new_type_ast)
 MAP_DEF(alias_ast)
+MAP_DEF(constant_ast)
 
 void show_new_type(const new_type_ast* const new_type);
 void show_alias(const alias_ast* const alias);
+void show_constant(const constant_ast* const cnst);
 
 typedef struct function_ast {
 	type_ast type;
@@ -325,13 +328,16 @@ typedef struct ast{
 	function_ast* func_v;
 	new_type_ast* new_type_v;
 	alias_ast* alias_v;
+	constant_ast* const_v;
 	function_ast_map functions;
 	new_type_ast_map types;
 	alias_ast_map aliases;
+	constant_ast_map constants;
 	uint32_t import_c;	
 	uint32_t func_c;
 	uint32_t new_type_c;
 	uint32_t alias_c;
+	uint32_t const_c;
 	uint32_t lifted_lambdas;
 } ast;
 
@@ -342,6 +348,7 @@ uint8_t parse_import(ast* const tree, lexer* const lex, pool* const mem, char* e
 type_ast parse_type(lexer* const lex, pool* const mem, char* err, token tok, TOKEN_TYPE_TAG end_token, uint8_t consume);
 new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err);
 alias_ast parse_alias(lexer* const lex, pool* const mem, char* err);
+constant_ast parse_constant(lexer* const lex, pool* const mem, char* err);
 function_ast parse_function(lexer* const lex, pool* const mem, token tok, char* err, uint8_t allowed_enclosing);
 expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t* simple);
 expression_ast parse_application_expression(lexer* const lex, pool* const mem, token expr, char* err, TOKEN_TYPE_TAG end_token, uint8_t allow_block, int8_t limit);
