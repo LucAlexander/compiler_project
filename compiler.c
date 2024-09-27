@@ -751,13 +751,14 @@ new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err){
 constant_ast parse_constant(lexer* const lex, pool* const mem, char* err){
 	token name = parse_token(lex);
 	constant_ast constant = {
-		.type.tag=PRIMITIVE_TYPE,
-		.type.data.primitive=INT_ANY
+		.value.type.tag=PRIMITIVE_TYPE,
+		.value.type.data.primitive=INT_ANY
 	};
 	if (name.type != TOKEN_IDENTIFIER){
 		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected name for constant identifier\n", lex->line, lex->col);
 		return constant;
 	}
+	constant.name=name;
 	token eq = parse_token(lex);
 	if (eq.type != TOKEN_SET){
 		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected token '=' to set constant value\n", lex->line, lex->col);
@@ -765,18 +766,18 @@ constant_ast parse_constant(lexer* const lex, pool* const mem, char* err){
 	token val = parse_token(lex);
 	switch (val.type){
 	case TOKEN_FLOAT:
-		constant.type=(type_ast){
+		constant.value.type=(type_ast){
 			.tag=PRIMITIVE_TYPE,
 			.data.primitive=FLOAT_ANY
 		};
-		constant.name=val;
+		constant.value.name=val;
 		break;
 	case TOKEN_INTEGER:
-		constant.type=(type_ast){
+		constant.value.type=(type_ast){
 			.tag=PRIMITIVE_TYPE,
 			.data.primitive=INT_ANY
 		};
-		constant.name=val;
+		constant.value.name=val;
 		break;
 	default:
 		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Constants can currently only evaluate to integers and floats, in the future this may just be turned into a compile time expression evaluation feature\n", lex->line, lex->col);
@@ -1589,7 +1590,7 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 	1 module system
 	2 parametric types
-	3 add constants, parametric constant buffer sizes < TODO current task
+	3 allow use of constants, both in buffer sizes and as bound names that resolve to values < TODO current task
 	4 loops
 	5 memory optimizations
 		1 fix lost space in arena
@@ -1861,11 +1862,20 @@ type_ast roll_expression(
 		type_ast* bound_type = scope_contains(roll, &expr->data.binding, &needs_capturing);
 		if (bound_type == NULL){
 			function_ast* bound_function = function_ast_map_access(&tree->functions, expr->data.binding.name.string);
-			if (bound_function == NULL){
-				snprintf(err, ERROR_BUFFER, " [!] Binding '%s' is not defined in current scope\n", expr->data.binding.name.string);
-				return expected_type;
+			if (bound_function != NULL){
+				bound_type = &bound_function->type;
 			}
-			bound_type = &bound_function->type;
+			else{
+				constant_ast* bound_constant = constant_ast_map_access(&tree->constants, expr->data.binding.name.string);
+				if (bound_constant != NULL){
+					bound_type = &bound_constant->value.type;
+					needs_capturing = 0; // just in case
+				}
+				else{
+					snprintf(err, ERROR_BUFFER, " [!] Binding '%s' is not defined in current scope\n", expr->data.binding.name.string);
+					return expected_type;
+				}
+			}
 		}
 		if (expected_type.tag == NONE_TYPE){
 			expr->data.binding.type = *bound_type;
@@ -3203,8 +3213,9 @@ void show_new_type(const new_type_ast* const new_type){
 }
 
 void show_constant(const constant_ast* const cnst){
-	show_type(&cnst->type);
 	show_token(&cnst->name);
+	printf(": ");
+	show_binding(&cnst->value);
 	printf("\n");
 }
 

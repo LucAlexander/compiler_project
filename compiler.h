@@ -217,7 +217,12 @@ uint8_t type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose)
 typedef struct binding_ast{
 	type_ast type;
 	token name;
-} binding_ast, new_type_ast, alias_ast, constant_ast;
+} binding_ast, new_type_ast, alias_ast;
+
+typedef struct constant_ast {
+	binding_ast value;
+	token name;
+} constant_ast;
 
 void show_binding(const binding_ast* const binding);
 
