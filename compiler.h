@@ -100,6 +100,7 @@ typedef enum TOKEN_TYPES {
 	TOKEN_MUTABLE,
 	TOKEN_PROC,
 	TOKEN_CONST,
+	TOKEN_CAST,
 	TOKEN_EOF
 } TOKEN_TYPE_TAG;
 
@@ -288,6 +289,7 @@ typedef struct expression_ast{
 		LAMBDA_EXPRESSION,
 		RETURN_EXPRESSION,
 		REF_EXPRESSION,
+		CAST_EXPRESSION,
 		NOP_EXPRESSION
 	} tag;
 	union {
@@ -306,6 +308,10 @@ typedef struct expression_ast{
 		binding_ast binding; // also used for value, union in token, allows type checking
 		lambda_ast lambda;
 		literal_ast literal;
+		struct {
+			struct expression_ast* target;
+			type_ast type;
+		} cast;
 	} data;
 } expression_ast;
 

@@ -205,6 +205,7 @@ uint32_t identifier_subtype(uint32_t type_index, char* const content){
 	if (strncmp(content, "ptr", TOKEN_MAX) == 0){ return TOKEN_REF; }
 	if (strncmp(content, "procedure", TOKEN_MAX) == 0){ return TOKEN_PROC; }
 	if (strncmp(content, "constant", TOKEN_MAX) == 0){ return TOKEN_CONST; }
+	if (strncmp(content, "as", TOKEN_MAX) == 0){ return TOKEN_CAST; }
 	return type_index;
 }
 
@@ -1236,6 +1237,29 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_v[0] = build;
 			outer.data.block.expr_v[1] = left_expr;
 			break;
+		case TOKEN_CAST:
+			if (outer.data.block.expr_c == 0){
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Pointer cast requires left argument\n", lex->line, lex->col);
+			}
+			token open_br = parse_token(lex);
+			if (open_br.type != TOKEN_BRACK_OPEN){
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Attempted to cast to non pointer type\n", lex->line, lex->col);
+				return outer;
+			}
+			type_ast cast_target = parse_type(lex, mem, err, parse_token(lex), TOKEN_BRACK_CLOSE, 1);
+			if (*err != 0){
+				return outer;
+			}
+			expression_ast ptr_cast = {
+				.tag=CAST_EXPRESSION,
+				.data.cast.target=pool_request(mem, sizeof(expression_ast)),
+				.data.cast.type=cast_target
+			};
+			*ptr_cast.data.cast.target = outer;
+			outer.data.block.expr_v = pool_request(mem, MAX_ARGS*sizeof(expression_ast));
+			outer.data.block.expr_c = 1;
+			outer.data.block.expr_v[0] = ptr_cast;
+			break;
 		case TOKEN_PASS:
 			if (pass == 0){
 				pass = 1;
@@ -1609,22 +1633,21 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 	1 module system
 	2 parametric types
-	3 allow use of constants, both in buffer sizes and as bound names that resolve to values < TODO current task
-	4 loops
-	5 memory optimizations
+	3 loops
+	4 memory optimizations
 		1 fix lost space in arena
 		2 make structs smaller
-	6 casting between types
-	7 memory arena/pool builtin stuff
-	8 matches on enumerated struct union, maybe with @
-	9 tagged break/continue that work with procedures
-	10 Finish semantic pass stuff
+	5 casting between types                              < TODO current task
+	6 memory arena/pool builtin stuff
+	7 matches on enumerated struct union, maybe with @
+	8 tagged break/continue that work with procedures
+	9 Finish semantic pass stuff
 		1 fix type equality
 		2 enum access with tag
 		3 group function application into distinct calls for defined top level functions
 		4 create structures for partial application cases
-	11 code generation
-	12 Good error system
+	10 code generation
+	11 Good error system
 
 */
 void handle_procedural_statement(scope* const roll, ast* const tree, pool* const mem, expression_ast* const line, type_ast expected_type, char* const err){
@@ -2376,6 +2399,32 @@ type_ast roll_expression(
 			return unref;
 		}
 		return expected_type;
+
+	case CAST_EXPRESSION:
+		type_ast cast_left_type = roll_expression(roll, tree, mem, expr->data.cast.target, expected_type, 0, NULL, 0, err);
+		if (*err != 0){
+			return cast_left_type;
+		}
+		if (cast_left_type.tag == POINTER_TYPE){
+			cast_left_type.data.pointer = pool_request(mem, sizeof(type_ast));
+			*cast_left_type.data.pointer = expr->data.cast.type;
+		}
+		else if (cast_left_type.tag == BUFFER_TYPE){
+			cast_left_type.data.buffer.base = pool_request(mem, sizeof(type_ast));
+			*cast_left_type.data.buffer.base = expr->data.cast.type;
+		}
+		else{
+			snprintf(err, ERROR_BUFFER, " [!] Both sides of cast must be of pointer or buffer type\n");
+			return cast_left_type;
+		}
+		if (expected_type.tag == NONE_TYPE){
+			return cast_left_type;
+		}
+		if (type_cmp(&expected_type, &cast_left_type, FOR_APPLICATION) != 0){
+			snprintf(err, ERROR_BUFFER, " [!] Pointed type cast to mismatched type\n");
+			return cast_left_type;
+		}
+		return cast_left_type;
 
 	default:
 		snprintf(err, ERROR_BUFFER, " [!] Unexpected expression type\n");
@@ -3286,6 +3335,11 @@ void show_expression(const expression_ast* const expr, uint8_t indent){
 	case REF_EXPRESSION:
 		printf("\033[1;31mptr \033[0m");
 		show_expression(expr->data.deref, indent);
+		break;
+	case CAST_EXPRESSION:
+		show_expression(expr->data.cast.target, indent);
+		printf("\033[1;31mcast as (pointer to) \033[0m");
+		show_type(&expr->data.cast.type);
 		break;
 	default:
 		printf("UNKNOWN EXPRESSION ");
