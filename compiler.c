@@ -701,6 +701,20 @@ type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TO
 			}
 			outer.mut = 1;
 			break;
+		case TOKEN_IDENTIFIER:
+			if (end_token != TOKEN_BRACK_CLOSE){
+				snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u Type given buffer size when not buffer or pointer\n", lex->line, lex->col);
+				return outer;
+			}
+			type_ast idenbase = outer;
+			outer.tag = BUFFER_TYPE;
+			outer.data.buffer.base = pool_request(mem, sizeof(type_ast));
+			*outer.data.buffer.base = idenbase;
+			outer.data.buffer.count = 0;
+			outer.data.buffer.constant = 1;
+			outer.data.buffer.const_binding = tok;
+			outer.mut = 0;
+			break;
 		case TOKEN_INTEGER:
 			if (end_token != TOKEN_BRACK_CLOSE){
 				snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u Type given buffer size when not buffer or pointer\n", lex->line, lex->col);
@@ -711,6 +725,7 @@ type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TO
 			outer.data.buffer.base = pool_request(mem, sizeof(type_ast));
 			*outer.data.buffer.base = base;
 			outer.data.buffer.count = atoi(tok.string);
+			outer.data.buffer.constant = 0;
 			outer.mut = 0;
 			break;
 		case TOKEN_FUNC_IMPL:
@@ -1579,6 +1594,10 @@ void pop_binding(scope* const s){
 void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* err){
 	for (uint32_t i = 0;i<tree->func_c;++i){
 		function_ast* f = &tree->func_v[i];
+		roll_type(roll, tree, mem, &f->type, err);
+		if (*err != 0){
+			return;
+		}
 		roll_expression(roll, tree, mem, &f->expression, f->type, 0, NULL, 1, err);
 		if (*err != 0){
 			return;
@@ -1626,6 +1645,68 @@ void handle_procedural_statement(scope* const roll, ast* const tree, pool* const
 		pop_frame(roll);
 		snprintf(err, ERROR_BUFFER, " [!] Statement expression branch returned incorrect type to root block\n");
 		return;
+	}
+}
+
+void roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err){
+	switch (target->tag){
+	case FUNCTION_TYPE:
+		roll_type(roll, tree, mem, target->data.function.left, err);
+		if (*err != 0){
+			return;
+		}
+		roll_type(roll, tree, mem, target->data.function.right, err);
+		return;
+	case PROCEDURE_TYPE:
+	case POINTER_TYPE:
+		roll_type(roll, tree, mem, target->data.pointer, err);
+		return;
+	case BUFFER_TYPE:
+		if (target->data.buffer.constant == 1){
+			constant_ast* param = constant_ast_map_access(&tree->constants, target->data.buffer.const_binding.string);
+			if (param == NULL){
+				snprintf(err, ERROR_BUFFER, " [!] Parameterized '%s' size not bound to constant\n", target->data.buffer.const_binding.string);
+				return;
+			}
+			if (param->value.type.tag == PRIMITIVE_TYPE && param->value.type.data.primitive == INT_ANY){
+				target->data.buffer.constant = 0;
+				target->data.buffer.count = atoi(param->value.name.string);
+			}
+			else{
+				snprintf(err, ERROR_BUFFER, " [!] Parameterized '%s' size bound to non integer constant\n", target->data.buffer.const_binding.string);
+				return;
+			}
+		}
+		roll_type(roll, tree, mem, target->data.buffer.base, err);
+		return;
+	case STRUCT_TYPE:
+		roll_struct_type(roll, tree, mem, target->data.structure, err);
+		return;
+	case USER_TYPE:
+	case PRIMITIVE_TYPE:
+	case NONE_TYPE:
+		return;
+	default:
+		snprintf(err, ERROR_BUFFER, " [!] Unexpected type tag\n");
+		return;
+	}
+}
+
+void roll_struct_type(scope* const roll, ast* const tree, pool* const mem, structure_ast* const target, char* err){
+	if (target == NULL){
+		return;
+	}
+	for (uint32_t i = 0;i<target->binding_c;++i){
+		roll_type(roll, tree, mem, &target->binding_v[i].type, err);
+		if (*err != 0){
+			return;
+		}
+	}
+	for (uint32_t i = 0;i<target->union_c;++i){
+		roll_struct_type(roll, tree, mem, &target->union_v[i], err);
+		if (*err != 0){
+			return;
+		}
 	}
 }
 
@@ -1717,6 +1798,10 @@ type_ast roll_expression(
 	case CLOSURE_EXPRESSION:
 		if (expected_type.tag != NONE_TYPE){
 			snprintf(err, ERROR_BUFFER, " [!] Unexpected closure encountered in expression that requires determinable type\n");
+			return expected_type;
+		}
+		roll_type(roll, tree, mem, &expr->data.closure.func->type, err);
+		if (*err != 0){
 			return expected_type;
 		}
 		type_ast desired = expr->data.closure.func->type;
@@ -2508,6 +2593,8 @@ uint8_t type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose)
 	}
 	return 1;
 }
+
+
 
 uint8_t struct_cmp(structure_ast* const a, structure_ast* const b){
 	if (a->union_c != b->union_c || a->binding_c != b->binding_c){
