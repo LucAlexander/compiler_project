@@ -1669,7 +1669,7 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 	2 loops
 	3 memory arena/pool builtin stuff         < TODO current task
 		1 alloc and free intrinsics
-		2 (* -> type) typeof and (type -> u64) sizeof intrinsics
+		2 size calcuation function
 	4 memory optimizations
 		1 fix lost space in arena
 		2 make structs smaller
@@ -2438,7 +2438,7 @@ type_ast roll_expression(
 		return expected_type;
 
 	case CAST_EXPRESSION:
-		type_ast cast_left_type = roll_expression(roll, tree, mem, expr->data.cast.target, expected_type, 0, NULL, 0, err);
+		type_ast cast_left_type = roll_expression(roll, tree, mem, expr->data.cast.target, infer, 0, NULL, 0, err);
 		if (*err != 0){
 			return cast_left_type;
 		}
@@ -3117,6 +3117,23 @@ void push_builtins(scope* const roll, pool* const mem){
 	binary_int_builtin(roll, mem, (token){ .len=1, .string="^", .type=TOKEN_BIT_XOR });
 	unary_int_builtin(roll, mem, (token){ .len=1, .string="~", .type=TOKEN_BIT_COMP });
 	unary_int_builtin(roll, mem, (token){ .len=1, .string="!", .type=TOKEN_BOOL_NOT });
+	//alloc builtin
+	binding_ast alloc = {
+		.name.len=strlen("alloc"),
+		.name.string="alloc",
+		.name.type=TOKEN_IDENTIFIER,
+		.type={.tag=FUNCTION_TYPE}
+	};
+	alloc.type.data.function.left = pool_request(mem, sizeof(type_ast));
+	alloc.type.data.function.right = pool_request(mem, sizeof(type_ast));
+	*alloc.type.data.function.left = (type_ast){.tag=PRIMITIVE_TYPE, .data.primitive=INT_ANY};
+	*alloc.type.data.function.right = (type_ast){.tag=POINTER_TYPE, .data.pointer=pool_request(mem, sizeof(type_ast))};
+	type_ast bytes = {
+		.tag=PRIMITIVE_TYPE,
+		.data.primitive=U8_TYPE
+	};
+	*alloc.type.data.function.right->data.pointer = bytes;
+	push_binding(roll, alloc);
 }
 
 void show_token(const token* const tok){
