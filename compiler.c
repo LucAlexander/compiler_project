@@ -206,6 +206,7 @@ uint32_t identifier_subtype(uint32_t type_index, char* const content){
 	if (strncmp(content, "procedure", TOKEN_MAX) == 0){ return TOKEN_PROC; }
 	if (strncmp(content, "constant", TOKEN_MAX) == 0){ return TOKEN_CONST; }
 	if (strncmp(content, "as", TOKEN_MAX) == 0){ return TOKEN_CAST; }
+	if (strncmp(content, "sizeof", TOKEN_MAX) == 0){ return TOKEN_SIZEOF; }
 	return type_index;
 }
 
@@ -1167,6 +1168,38 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			last_pass->data.block.expr_v[last_pass->data.block.expr_c] = outer;
 			last_pass->data.block.expr_c += 1;
 			return pass_expression;
+		case TOKEN_SIZEOF:
+			build.tag = SIZEOF_EXPRESSION;
+			copy = *lex;
+			save = ftell(lex->fd);
+			pool_save(mem);
+			build.data.size_of.type = parse_type(lex, mem, err, parse_token(lex), end_token, 0);
+			if (*err == 0){
+				build.data.size_of.target = NULL;
+				outer.data.block.expr_v[outer.data.block.expr_c] = build;
+				outer.data.block.expr_c += 1;
+				break;
+			}
+			if (fseek(lex->fd, save, SEEK_SET) != 0){
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing sizeof expression intrinsic\n", lex->line, lex->col);
+				return outer;
+			}
+			pool_load(mem);
+			*lex = copy;
+			*err = 0;
+			build.data.size_of.target = pool_request(mem, sizeof(expression_ast));
+			*build.data.size_of.target = parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block, -1);
+			if (*err != 0){
+				return outer;
+			}
+			outer.data.block.expr_v[outer.data.block.expr_c] = build;
+			outer.data.block.expr_c += 1;
+			if (pass == 0){
+				return outer;
+			}
+			last_pass->data.block.expr_v[last_pass->data.block.expr_c] = outer;
+			last_pass->data.block.expr_c += 1;
+			return pass_expression;
 		case TOKEN_SET:
 			if (outer.data.block.expr_c != 1){
 				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Mutation with '=' requires 1 left operand, was operand number %u\n", lex->line, lex->col, outer.data.block.expr_c);
@@ -1631,23 +1664,27 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 /* TODO LIST
 
+	0 size intrinsic
 	1 module system
-	2 parametric types
-	3 loops
+	2 loops
+	3 memory arena/pool builtin stuff         < TODO current task
+		1 alloc and free intrinsics
+		2 (* -> type) typeof and (type -> u64) sizeof intrinsics
 	4 memory optimizations
 		1 fix lost space in arena
 		2 make structs smaller
-	5 casting between types                              < TODO current task
-	6 memory arena/pool builtin stuff
-	7 matches on enumerated struct union, maybe with @
-	8 tagged break/continue that work with procedures
-	9 Finish semantic pass stuff
+		3 read from file at start, skipping system call on subsequent parse_token calls
+	5 matches on enumerated struct union, maybe with @
+	6 tagged break/continue that work with procedures
+	7 parametric types
+	8 Finish semantic pass stuff
+		0 all the little todos
 		1 fix type equality
 		2 enum access with tag
 		3 group function application into distinct calls for defined top level functions
 		4 create structures for partial application cases
-	10 code generation
-	11 Good error system
+	9 code generation
+	10 Good error system
 
 */
 void handle_procedural_statement(scope* const roll, ast* const tree, pool* const mem, expression_ast* const line, type_ast expected_type, char* const err){
@@ -2425,6 +2462,20 @@ type_ast roll_expression(
 			return cast_left_type;
 		}
 		return cast_left_type;
+
+	case SIZEOF_EXPRESSION:
+		if (expr->data.size_of.target != NULL){
+			expr->data.size_of.type = roll_expression(roll, tree, mem, expr->data.size_of.target, infer, 0, NULL, 0, err);
+			if (*err != 0){
+				return expected_type;
+			}
+		}
+		uint64_t target_size = 64; // TODO placeholder for size function
+		expr->data.size_of.size = target_size;
+		return (type_ast){
+			.tag=PRIMITIVE_TYPE,
+			.data.primitive=INT_ANY
+		};
 
 	default:
 		snprintf(err, ERROR_BUFFER, " [!] Unexpected expression type\n");
@@ -3340,6 +3391,16 @@ void show_expression(const expression_ast* const expr, uint8_t indent){
 		show_expression(expr->data.cast.target, indent);
 		printf("\033[1;31mcast as (pointer to) \033[0m");
 		show_type(&expr->data.cast.type);
+		break;
+	case SIZEOF_EXPRESSION:
+		printf("\033[1;31m size of \033[0m");
+		if (expr->data.size_of.target != NULL){
+			show_expression(expr->data.size_of.target, indent);
+		}
+		else{
+			show_type(&expr->data.size_of.type);
+		}
+		printf("\033[1;31m(%lu bytes) \033[0m", expr->data.size_of.size);
 		break;
 	default:
 		printf("UNKNOWN EXPRESSION ");

@@ -101,6 +101,7 @@ typedef enum TOKEN_TYPES {
 	TOKEN_PROC,
 	TOKEN_CONST,
 	TOKEN_CAST,
+	TOKEN_SIZEOF,
 	TOKEN_EOF
 } TOKEN_TYPE_TAG;
 
@@ -290,6 +291,7 @@ typedef struct expression_ast{
 		RETURN_EXPRESSION,
 		REF_EXPRESSION,
 		CAST_EXPRESSION,
+		SIZEOF_EXPRESSION,
 		NOP_EXPRESSION
 	} tag;
 	union {
@@ -312,6 +314,11 @@ typedef struct expression_ast{
 			struct expression_ast* target;
 			type_ast type;
 		} cast;
+		struct {
+			struct expression_ast* target;
+			type_ast type;
+			uint64_t size;
+		} size_of;
 	} data;
 } expression_ast;
 
