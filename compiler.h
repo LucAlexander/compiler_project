@@ -187,7 +187,8 @@ typedef struct type_ast {
 		USER_TYPE,
 		STRUCT_TYPE,
 		PROCEDURE_TYPE,
-		NONE_TYPE
+		NONE_TYPE,
+		INTERNAL_ANY_TYPE
 	} tag;
 	union {
 		struct {

@@ -1668,7 +1668,7 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 	1 module system
 	2 loops
 	3 memory arena/pool builtin stuff         < TODO current task
-		1 alloc and free intrinsics
+		1 free intrinsic
 		2 size calcuation function
 	4 memory optimizations
 		1 fix lost space in arena
@@ -2646,6 +2646,9 @@ type_ast apply_type(type_ast* const func, char* err){
 }
 
 uint8_t type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose){
+	if (a->tag == INTERNAL_ANY_TYPE || b->tag == INTERNAL_ANY_TYPE){
+		return 0;
+	}
 	switch(purpose){
 	case FOR_MUTATION:
 		if (a->mut == 0 || a->tag == PROCEDURE_TYPE){
@@ -3134,6 +3137,20 @@ void push_builtins(scope* const roll, pool* const mem){
 	};
 	*alloc.type.data.function.right->data.pointer = bytes;
 	push_binding(roll, alloc);
+	//free builtin
+	binding_ast dealloc = {
+		.name.len=strlen("free"),
+		.name.string="free",
+		.name.type=TOKEN_IDENTIFIER,
+		.type={.tag=FUNCTION_TYPE}
+	};
+	dealloc.type.data.function.left = pool_request(mem, sizeof(type_ast));
+	dealloc.type.data.function.right = pool_request(mem, sizeof(type_ast));
+	*dealloc.type.data.function.left = (type_ast){.tag=POINTER_TYPE, .data.pointer=pool_request(mem, sizeof(type_ast))};
+	*dealloc.type.data.function.right = (type_ast){.tag=PRIMITIVE_TYPE, .data.primitive=INT_ANY};
+	bytes.tag=INTERNAL_ANY_TYPE;
+	*dealloc.type.data.function.left->data.pointer = bytes;
+	push_binding(roll, dealloc);
 }
 
 void show_token(const token* const tok){
