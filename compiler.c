@@ -1665,23 +1665,22 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 /* TODO LIST
 
-	0 size intrinsic
 	1 module system
 	2 loops
-	3 size calcuation function              < TODO current task
-	4 memory optimizations
+	3 memory optimizations
 		1 fix lost space in arena
 		2 make structs smaller
 		3 read from file at start, skipping system call on subsequent parse_token calls
-	5 matches on enumerated struct union, maybe with @
-	6 tagged break/continue that work with procedures
-	7 parametric types
-	8 Finish semantic pass stuff
+	4 matches on enumerated struct union, maybe with @
+	5 tagged break/continue that work with procedures
+	6 parametric types
+	7 Finish semantic pass stuff
 		0 all the little todos
 		1 fix type equality
 		2 enum access with tag
 		3 group function application into distinct calls for defined top level functions
 		4 create structures for partial application cases
+	8 struct ordering
 	9 code generation
 	10 Good error system
 
@@ -2469,7 +2468,10 @@ type_ast roll_expression(
 				return expected_type;
 			}
 		}
-		uint64_t target_size = 64; // TODO placeholder for size function
+		uint64_t target_size = type_size(tree, expr->data.size_of.type, err);
+		if (*err != 0){
+			return expected_type;
+		}
 		expr->data.size_of.size = target_size;
 		return (type_ast){
 			.tag=PRIMITIVE_TYPE,
@@ -2480,6 +2482,53 @@ type_ast roll_expression(
 		snprintf(err, ERROR_BUFFER, " [!] Unexpected expression type\n");
 	}
 	return expected_type;
+}
+
+uint64_t struct_size_helper(ast* const tree, structure_ast target_struct, uint64_t rolling_size, char* err){
+	return rolling_size;//TODO
+}
+
+uint64_t type_size_helper(ast* const tree, type_ast target_type, uint64_t rolling_size, char* err){
+	switch(target_type.tag){
+	case FUNCTION_TYPE:
+		return rolling_size+8;
+	case PRIMITIVE_TYPE:
+		if (target_type.data.primitive == U8_TYPE) { return rolling_size+1; };
+		if (target_type.data.primitive == U16_TYPE) { return rolling_size+2; };
+		if (target_type.data.primitive == U32_TYPE) { return rolling_size+4; };
+		if (target_type.data.primitive == U64_TYPE) { return rolling_size+8; };
+		if (target_type.data.primitive == I8_TYPE) { return rolling_size+1; };
+		if (target_type.data.primitive == I16_TYPE) { return rolling_size+2; };
+		if (target_type.data.primitive == I32_TYPE) { return rolling_size+4; };
+		if (target_type.data.primitive == I64_TYPE) { return rolling_size+8; };
+		if (target_type.data.primitive == INT_ANY) { return rolling_size+8; };
+		if (target_type.data.primitive == F32_TYPE) { return rolling_size+4; };
+		if (target_type.data.primitive == F64_TYPE) { return rolling_size+8; };
+		if (target_type.data.primitive == FLOAT_ANY) { return rolling_size+8; };
+	case POINTER_TYPE:
+		return rolling_size+8;
+	case BUFFER_TYPE:
+		return rolling_size+8;
+	case USER_TYPE:
+		type_ast inner = resolve_type_or_alias(tree, target_type, err);
+		if (*err != 0){
+			return rolling_size;
+		}
+		return type_size_helper(tree, inner, rolling_size, err);
+	case STRUCT_TYPE:
+		return struct_size_helper(tree, *target_type.data.structure, rolling_size, err);
+	case PROCEDURE_TYPE:
+		return rolling_size+8;
+	default:
+		snprintf(err, ERROR_BUFFER, " [!] Unable to deduce size of type\n");
+		return rolling_size;
+	}
+	snprintf(err, ERROR_BUFFER, " [!] How did you get here in type size deduction?\n");
+	return 0;
+}
+
+uint64_t type_size(ast* const tree, type_ast target_type, char* err){
+	return type_size_helper(tree, target_type, 0, err);
 }
 
 void lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, binding_ast* captured_bindings, uint16_t total_captures, pool* const mem){
