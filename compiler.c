@@ -965,6 +965,7 @@ function_ast try_function(lexer* const lex, pool* const mem, token expr, char* e
 	uint32_t save;
 	function_ast func;
 	switch(expr.type){
+	case TOKEN_PROC:
 	case TOKEN_IDENTIFIER:
 	case TOKEN_BRACE_OPEN:
 	case TOKEN_PAREN_OPEN:
@@ -1667,9 +1668,7 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 	0 size intrinsic
 	1 module system
 	2 loops
-	3 memory arena/pool builtin stuff         < TODO current task
-		1 free intrinsic
-		2 size calcuation function
+	3 size calcuation function              < TODO current task
 	4 memory optimizations
 		1 fix lost space in arena
 		2 make structs smaller
