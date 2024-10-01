@@ -31,6 +31,7 @@ typedef enum TOKEN_TYPES {
 	TOKEN_IMPORT,
 	TOKEN_IF,
 	TOKEN_ELSE,
+	TOKEN_FOR,
 	TOKEN_MATCH,
 	TOKEN_U8,
 	TOKEN_U16,
@@ -233,7 +234,8 @@ void show_binding(const binding_ast* const binding);
 
 typedef struct statement_ast{
 	enum {
-		IF_STATEMENT
+		IF_STATEMENT,
+		FOR_STATEMENT
 	} tag;
 	union {
 		struct {
@@ -241,6 +243,12 @@ typedef struct statement_ast{
 			struct expression_ast* branch;
 			struct expression_ast* alternate;
 		} if_statement;
+		struct {
+			struct expression_ast* start;
+			struct expression_ast* end;
+			struct expression_ast* inc;
+			struct expression_ast* procedure;
+		} for_statement;
 	} data;
 	type_ast type;
 } statement_ast;

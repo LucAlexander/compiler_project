@@ -186,6 +186,7 @@ uint8_t lex_identifier(const char* const string){
 uint32_t identifier_subtype(uint32_t type_index, char* const content){
 	if (strncmp(content, "if", TOKEN_MAX) == 0){ return TOKEN_IF; }
 	if (strncmp(content, "else", TOKEN_MAX) == 0){ return TOKEN_ELSE; }
+	if (strncmp(content, "for", TOKEN_MAX) == 0){ return TOKEN_FOR; }
 	if (strncmp(content, "using", TOKEN_MAX) == 0){ return TOKEN_IMPORT; }
 	if (strncmp(content, "match", TOKEN_MAX) == 0){ return TOKEN_MATCH; }
 	if (strncmp(content, "return", TOKEN_MAX) == 0){ return TOKEN_RETURN; }
@@ -1467,6 +1468,33 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_v[outer.data.block.expr_c] = build;
 			outer.data.block.expr_c += 1;
 			break;
+		case TOKEN_FOR:
+			build = parse_application_expression(lex, mem, expr, err, end_token, 0, 4);
+			if (*err != 0){
+				return outer;
+			}
+			if (build.data.block.expr_c < 4){
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u 'for' special form required 4 positional arguments (start -> end -> inc -> procedure), %u provided\n", lex->line, lex->col, build.data.block.expr_c);
+				return outer;
+			}
+			statement_ast forr = {
+				.tag=FOR_STATEMENT,
+				.data.for_statement.start = pool_request(mem, sizeof(expression_ast)),
+				.data.for_statement.end = pool_request(mem, sizeof(expression_ast)),
+				.data.for_statement.inc = pool_request(mem, sizeof(expression_ast)),
+				.data.for_statement.procedure = pool_request(mem, sizeof(expression_ast)),
+				.type.tag=NONE_TYPE
+			};
+			*forr.data.for_statement.start = build.data.block.expr_v[0];
+			*forr.data.for_statement.end = build.data.block.expr_v[1];
+			*forr.data.for_statement.inc = build.data.block.expr_v[2];
+			*forr.data.for_statement.procedure = build.data.block.expr_v[3];
+			build.tag = STATEMENT_EXPRESSION;
+			build.data.statement = forr;
+			build.data.statement.type.tag=NONE_TYPE;
+			outer.data.block.expr_v[outer.data.block.expr_c] = build;
+			outer.data.block.expr_c += 1;
+			break;
 		case TOKEN_SEMI:
 			if (allow_block == 1){
 				if (outer.data.block.expr_c == 0){
@@ -1676,9 +1704,11 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 /* TODO LIST
 
-	0 fix mutation
+	0 fix capture duplication
 	1 module system
 	2 loops               < TODO current task
+		1 for special form
+		2 tagged break/continue that work with procedures
 	3 memory optimizations
 		1 fix lost space in arena
 		2 make structs smaller
@@ -1689,12 +1719,10 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 		3 group function application into distinct calls for defined top level functions
 		4 create structures for partial application cases
 	5 matches on enumerated struct union, maybe with @ / enum access with tag?
-	6 tagged break/continue that work with procedures
-	7 struct ordering
-	8 code generation
-	9 Good error system
-	10 parametric types
-	11 polymorphic generic dependable functions (orderable T) => [T] -> [T]
+	6 struct ordering
+	7 code generation
+	8 Good error system
+	9 parametric types
 
 */
 
@@ -2846,11 +2874,52 @@ type_ast roll_statement_expression(
 			return expected_type;
 		}
 		if (type_cmp(&btype, &atype, FOR_EQUALITY) != 0){
-			snprintf(err, ERROR_BUFFER, " [!] branch and alternate types in conditional statement expression do not match\n");
+			snprintf(err, ERROR_BUFFER, " [!] Branch and alternate types in conditional statement expression do not match\n");
 			return expected_type;
 		}
 		statement->type = btype;
 		return btype;
+
+	case FOR_STATEMENT:
+		if (as_expression == 1){
+			snprintf(err, ERROR_BUFFER, " [!] 'for' special form can only be statement for now\n");
+			return expected_type;
+		}
+		type_ast temp = expected_type;
+		expected_type.tag = PROCEDURE_TYPE;
+		expected_type.data.pointer = pool_request(mem, sizeof(type_ast));
+		*expected_type.data.pointer = temp;
+		type_ast range_type = {
+			.tag = PRIMITIVE_TYPE,
+			.data.primitive=INT_ANY
+		};
+		roll_expression(roll, tree, mem, statement->data.for_statement.start, range_type, 0, NULL, 0, err);
+		if (*err != 0){
+			return expected_type;
+		}
+		roll_expression(roll, tree, mem, statement->data.for_statement.end, range_type, 0, NULL, 0, err);
+		if (*err != 0){
+			return expected_type;
+		}
+		type_ast iter_type = {
+			.tag=FUNCTION_TYPE,
+			.data.function.left=pool_request(mem, sizeof(type_ast)),
+			.data.function.right=pool_request(mem, sizeof(type_ast))
+		};
+		*iter_type.data.function.left = range_type;
+		*iter_type.data.function.right = range_type;
+		roll_expression(roll, tree, mem, statement->data.for_statement.inc, iter_type, 0, NULL, 0, err);
+		if (*err != 0){
+			return expected_type;
+		}
+		*iter_type.data.function.left = range_type;
+		*iter_type.data.function.right = expected_type;
+		roll_expression(roll, tree, mem, statement->data.for_statement.procedure, iter_type, 0, NULL, 0, err);//TODO make sure the procedure is compatible
+		if (*err != 0){
+			return expected_type;
+		}
+		statement->type = expected_type;
+		return expected_type;
 
 	default:
 		snprintf(err, ERROR_BUFFER, " [!] Unknown statement type %u\n", statement->tag);
@@ -3381,6 +3450,16 @@ void show_statement(const statement_ast* const statement, uint8_t indent){
 			printf("\033[1;31melse \033[0m");
 			show_expression(statement->data.if_statement.alternate, indent+1);
 		}
+		break;
+	case FOR_STATEMENT:
+		printf("\033[1;31mfor \033[0m");
+		show_expression(statement->data.for_statement.start, indent);
+		printf("\033[1;31mto \033[0m");
+		show_expression(statement->data.for_statement.end, indent);
+		printf("\033[1;31mby \033[0m");
+		show_expression(statement->data.for_statement.inc, indent);
+		printf("\033[1;31mdo \033[0m");
+		show_expression(statement->data.for_statement.procedure, indent);
 		break;
 	default:
 		printf("<UNKNOWN STATEMENT> ");
