@@ -1211,10 +1211,21 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u First operand of mutation '=' must be either a dereference or a bound variable name\n", lex->line, lex->col);
 				return outer;
 			}
+			if (pass != 0){
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Errpr at %u:%u Mutation must be dominant expression\n", lex->line, lex->col);
+				return outer;
+			}
+			build.tag=BINDING_EXPRESSION;
 			build.data.binding.type.tag=NONE_TYPE;
 			build.data.binding.name=expr;
 			outer.data.block.expr_v[outer.data.block.expr_c] = build;
 			outer.data.block.expr_c += 1;
+			pass = 1;
+			pass_expression = outer;
+			outer.data.block.type.tag=NONE_TYPE;
+			outer.data.block.expr_v = pool_request(mem, MAX_ARGS*sizeof(expression_ast));
+			outer.data.block.expr_c = 0;
+			last_pass = &pass_expression;
 			break;
 		case TOKEN_ARG:
 			build = parse_lambda(lex, mem, err, end_token, &simple);
@@ -1665,26 +1676,28 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 /* TODO LIST
 
+	0 fix mutation
 	1 module system
-	2 loops
+	2 loops               < TODO current task
 	3 memory optimizations
 		1 fix lost space in arena
 		2 make structs smaller
 		3 read from file at start, skipping system call on subsequent parse_token calls
-	4 matches on enumerated struct union, maybe with @
-	5 tagged break/continue that work with procedures
-	6 parametric types
-	7 Finish semantic pass stuff
-		0 all the little todos
-		1 fix type equality
-		2 enum access with tag
+	4 Finish semantic pass stuff
+		1 all the little todos
+		2 fix type equality
 		3 group function application into distinct calls for defined top level functions
 		4 create structures for partial application cases
-	8 struct ordering
-	9 code generation
-	10 Good error system
+	5 matches on enumerated struct union, maybe with @ / enum access with tag?
+	6 tagged break/continue that work with procedures
+	7 struct ordering
+	8 code generation
+	9 Good error system
+	10 parametric types
+	11 polymorphic generic dependable functions (orderable T) => [T] -> [T]
 
 */
+
 void handle_procedural_statement(scope* const roll, ast* const tree, pool* const mem, expression_ast* const line, type_ast expected_type, char* const err){
 	if (expected_type.tag == PROCEDURE_TYPE){
 		expected_type = *expected_type.data.pointer;
