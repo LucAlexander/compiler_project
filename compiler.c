@@ -2669,6 +2669,11 @@ void push_capture_binding(scope* const roll, binding_ast binding){
 		fprintf(stderr, "Capture limit exceeded in stack frame\n");
 		return;
 	}
+	for (uint32_t i = 0;i<roll->captures->size;++i){
+		if (strncmp(binding.name.string, roll->captures->binding_list[i].name.string, TOKEN_MAX) == 0){
+			return;
+		}
+	}
 	roll->captures->binding_list[roll->captures->size] = binding;
 	roll->captures->size += 1;
 }
