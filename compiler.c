@@ -18,6 +18,8 @@ token create_token(lexer* const lex){
 		syntactic_subtype,
 		symbol_subtype,
 		no_subtype,
+		no_subtype,
+		no_subtype,
 		no_subtype
 	};
 	token tok = {
@@ -61,7 +63,9 @@ token parse_token(lexer* const lex){
 		lex_syntactic,
 		lex_symbol,
 		lex_integer,
-		lex_float
+		lex_float,
+		lex_label,
+		lex_label_jump
 	};
 	while ((c = fgetc(lex->fd)) != EOF){
 		lex->col += 1;
@@ -181,6 +185,39 @@ uint8_t lex_identifier(const char* const string){
 		}
 	}
 	return 0;
+}
+
+uint8_t lex_label(const char* const string){
+	const char* c = string;
+	if (isdigit(*c)){
+		return 1;
+	}
+	for (; *(c+1) != '\0';++c){
+		if (!isupper(*c) && !islower(*c) && !isdigit(*c) && (*c != '_')){
+			return 1;
+		}
+	}
+	if (*c == ':'){
+		return 0;
+	}
+	return 1;
+}
+
+uint8_t lex_label_jump(const char* const string){
+	const char* c = string;
+	if (*c != ':'){
+		return 1;
+	}
+	c += 1;
+	if (isdigit(*c)){
+		return 1;
+	}
+	for (; *c != '\0';++c){
+		if (!isupper(*c) && !islower(*c) && !isdigit(*c) && (*c != '_')){
+			return 1;
+		}
+	}
+	return 1;
 }
 
 uint32_t identifier_subtype(uint32_t type_index, char* const content){
@@ -1081,6 +1118,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 		limit_copy = *lex;
 		expr = parse_token(lex);
 	}
+	LABEL_REQUEST label_req = LABEL_FULFILLED;
 	while (1){
 		expression_ast build = {
 			.tag=BINDING_EXPRESSION
@@ -1344,6 +1382,9 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_v[outer.data.block.expr_c] = build;
 			outer.data.block.expr_c += 1;
 			break;
+		case TOKEN_LABEL:
+			label_req = LABEL_REQUESTED;
+		case TOKEN_LABEL_JUMP:
 		case TOKEN_IDENTIFIER:
 			build.data.binding.type.tag=NONE_TYPE;
 			build.data.binding.name=expr;
@@ -1454,7 +1495,8 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 				.data.if_statement.predicate = pool_request(mem, sizeof(expression_ast)),
 				.data.if_statement.branch = pool_request(mem, sizeof(expression_ast)),
 				.data.if_statement.alternate = NULL,
-				.type.tag=NONE_TYPE
+				.type.tag=NONE_TYPE,
+				.labeled=0
 			};
 			*iff.data.if_statement.predicate = build.data.block.expr_v[0];
 			*iff.data.if_statement.branch = build.data.block.expr_v[1];
@@ -1462,9 +1504,18 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 				iff.data.if_statement.alternate = pool_request(mem, sizeof(expression_ast));
 				*iff.data.if_statement.alternate = build.data.block.expr_v[2];
 			}
+			if (label_req == LABEL_WAITING){
+				if (outer.data.block.expr_c != 0 && outer.data.block.expr_v[outer.data.block.expr_c-1].tag != BINDING_EXPRESSION){
+					snprintf(err, ERROR_BUFFER, " <!> Parsing Error %u:%u no previous label but one was requested\n", lex->line, lex->col);
+					return outer;
+				}
+				label_req = LABEL_FULFILLED;
+				iff.labeled = 1;
+				iff.label = outer.data.block.expr_v[outer.data.block.expr_c-1].data.binding;
+				outer.data.block.expr_c -= 1;
+			}
 			build.tag = STATEMENT_EXPRESSION;
 			build.data.statement = iff;
-			build.data.statement.type.tag=NONE_TYPE;
 			outer.data.block.expr_v[outer.data.block.expr_c] = build;
 			outer.data.block.expr_c += 1;
 			break;
@@ -1483,15 +1534,25 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 				.data.for_statement.end = pool_request(mem, sizeof(expression_ast)),
 				.data.for_statement.inc = pool_request(mem, sizeof(expression_ast)),
 				.data.for_statement.procedure = pool_request(mem, sizeof(expression_ast)),
-				.type.tag=NONE_TYPE
+				.type.tag=NONE_TYPE,
+				.labeled=0
 			};
 			*forr.data.for_statement.start = build.data.block.expr_v[0];
 			*forr.data.for_statement.end = build.data.block.expr_v[1];
 			*forr.data.for_statement.inc = build.data.block.expr_v[2];
 			*forr.data.for_statement.procedure = build.data.block.expr_v[3];
+			if (label_req == LABEL_WAITING){
+				if (outer.data.block.expr_c != 0 && outer.data.block.expr_v[outer.data.block.expr_c-1].tag != BINDING_EXPRESSION){
+					snprintf(err, ERROR_BUFFER, " <!> Parsing Error %u:%u no previous label but one was requested\n", lex->line, lex->col);
+					return outer;
+				}
+				label_req = LABEL_FULFILLED;
+				forr.labeled = 1;
+				forr.label = outer.data.block.expr_v[outer.data.block.expr_c-1].data.binding;
+				outer.data.block.expr_c -= 1;
+			}
 			build.tag = STATEMENT_EXPRESSION;
 			build.data.statement = forr;
-			build.data.statement.type.tag=NONE_TYPE;
 			outer.data.block.expr_v[outer.data.block.expr_c] = build;
 			outer.data.block.expr_c += 1;
 			break;
@@ -1521,6 +1582,13 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			if (limit > 0){
 				limit -= 1;
 			}
+		}
+		if (label_req == LABEL_WAITING){
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u label must precede statement\n", lex->line, lex->col);
+			return outer;
+		}
+		if (label_req == LABEL_REQUESTED){
+			label_req = LABEL_WAITING;
 		}
 		expr = parse_token(lex);
 	}
@@ -1704,11 +1772,8 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 /* TODO LIST
 
-	0 fix capture duplication
 	1 module system
-	2 loops               < TODO current task
-		1 for special form
-		2 tagged break/continue that work with procedures
+	2 tagged break/continue that work with procedures               < TODO current task
 	3 memory optimizations
 		1 fix lost space in arena
 		2 make structs smaller
@@ -3445,6 +3510,10 @@ void show_binding(const binding_ast* const binding){
 }
 
 void show_statement(const statement_ast* const statement, uint8_t indent){
+	if (statement->labeled == 1){
+		printf("\033[1;31mlabel \033[0m");
+		show_binding(&statement->label);
+	}
 	switch(statement->tag){
 	case IF_STATEMENT:
 		printf("\033[1;31mif \033[0m");

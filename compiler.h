@@ -27,6 +27,8 @@ typedef enum TOKEN_TYPES {
 	TOKEN_SYMBOL,
 	TOKEN_INTEGER,
 	TOKEN_FLOAT,
+	TOKEN_LABEL,
+	TOKEN_LABEL_JUMP,
 	TOKEN_TYPE_COUNT,
 	TOKEN_IMPORT,
 	TOKEN_IF,
@@ -143,6 +145,15 @@ uint32_t symbol_subtype(uint32_t type_index, char* const content);
 uint8_t lex_integer(const char* const string);
 uint8_t lex_float(const char* const string);
 
+typedef enum LABEL_REQUEST {
+	LABEL_FULFILLED=0,
+	LABEL_WAITING,
+	LABEL_REQUESTED
+} LABEL_REQUEST;
+
+uint8_t lex_label(const char* const string);
+uint8_t lex_label_jump(const char* const string);
+
 uint32_t no_subtype(uint32_t type_index, char* const content);
 uint8_t issymbol(char c);
 
@@ -251,6 +262,8 @@ typedef struct statement_ast{
 		} for_statement;
 	} data;
 	type_ast type;
+	uint8_t labeled;
+	binding_ast label;
 } statement_ast;
 
 void show_statement(const statement_ast* const statement, uint8_t indent);
