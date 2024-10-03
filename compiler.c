@@ -217,7 +217,7 @@ uint8_t lex_label_jump(const char* const string){
 			return 1;
 		}
 	}
-	return 1;
+	return 0;
 }
 
 uint32_t identifier_subtype(uint32_t type_index, char* const content){
@@ -245,6 +245,8 @@ uint32_t identifier_subtype(uint32_t type_index, char* const content){
 	if (strncmp(content, "constant", TOKEN_MAX) == 0){ return TOKEN_CONST; }
 	if (strncmp(content, "as", TOKEN_MAX) == 0){ return TOKEN_CAST; }
 	if (strncmp(content, "sizeof", TOKEN_MAX) == 0){ return TOKEN_SIZEOF; }
+	if (strncmp(content, "break", TOKEN_MAX) == 0){ return TOKEN_BREAK; }
+	if (strncmp(content, "continue", TOKEN_MAX) == 0){ return TOKEN_CONTINUE; }
 	return type_index;
 }
 
@@ -1119,6 +1121,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 		expr = parse_token(lex);
 	}
 	LABEL_REQUEST label_req = LABEL_FULFILLED;
+	LABEL_REQUEST jump_req = LABEL_FULFILLED;
 	while (1){
 		expression_ast build = {
 			.tag=BINDING_EXPRESSION
@@ -1384,7 +1387,6 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			break;
 		case TOKEN_LABEL:
 			label_req = LABEL_REQUESTED;
-		case TOKEN_LABEL_JUMP:
 		case TOKEN_IDENTIFIER:
 			build.data.binding.type.tag=NONE_TYPE;
 			build.data.binding.name=expr;
@@ -1556,6 +1558,56 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_v[outer.data.block.expr_c] = build;
 			outer.data.block.expr_c += 1;
 			break;
+		case TOKEN_BREAK:
+			if (outer.data.block.expr_c != 0){
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Jump directive 'continue' passed as argument\n", lex->line, lex->col);
+				return outer;
+			}
+			statement_ast brk = {
+				.tag=BREAK_STATEMENT,
+				.type.tag=NONE_TYPE,
+				.labeled=0
+			};
+			jump_req = LABEL_REQUESTED;
+			build.tag = STATEMENT_EXPRESSION;
+			build.data.statement = brk;
+			outer.data.block.expr_v[outer.data.block.expr_c] = build;
+			outer.data.block.expr_c += 1;
+			break;
+		case TOKEN_CONTINUE:
+			if (outer.data.block.expr_c != 0){
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Jump directive 'continue' passed as argument\n", lex->line, lex->col);
+				return outer;
+			}
+			statement_ast cnt = {
+				.tag=CONTINUE_STATEMENT,
+				.type.tag=NONE_TYPE,
+				.labeled=0
+			};
+			jump_req = LABEL_REQUESTED;
+			build.tag = STATEMENT_EXPRESSION;
+			build.data.statement = cnt;
+			outer.data.block.expr_v[outer.data.block.expr_c] = build;
+			outer.data.block.expr_c += 1;
+			break;
+		case TOKEN_LABEL_JUMP:
+			if (jump_req != LABEL_WAITING){
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u jump label must succeed jump directive statement\n", lex->line, lex->col);
+				return outer;
+			}
+			expression_ast* jump_directive = &outer.data.block.expr_v[outer.data.block.expr_c-1];
+			if (jump_directive->tag != STATEMENT_EXPRESSION){
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Jump directive was not statement?\n", lex->line, lex->col);
+				return outer;
+			}
+			binding_ast directive_binding = {
+				.name=expr,
+				.type.tag=NONE_TYPE
+			};
+			jump_directive->data.statement.labeled = 1;
+			jump_directive->data.statement.label = directive_binding;
+			jump_req = LABEL_EXPIRED;
+			break;
 		case TOKEN_SEMI:
 			if (allow_block == 1){
 				if (outer.data.block.expr_c == 0){
@@ -1587,8 +1639,22 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u label must precede statement\n", lex->line, lex->col);
 			return outer;
 		}
+		if (jump_req == LABEL_WAITING){
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u jump label must succeed jump directive statement\n", lex->line, lex->col);
+			return outer;
+		}
+		if (jump_req == LABEL_EXPIRED){
+			jump_req = LABEL_OVERDUE;
+		}
+		else if (jump_req == LABEL_OVERDUE){
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected end of jump directive statement\n", lex->line, lex->col);
+			return outer;
+		}
 		if (label_req == LABEL_REQUESTED){
 			label_req = LABEL_WAITING;
+		}
+		if (jump_req == LABEL_REQUESTED){
+			jump_req = LABEL_WAITING;
 		}
 		expr = parse_token(lex);
 	}
@@ -1773,7 +1839,7 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 /* TODO LIST
 
 	1 module system
-	2 tagged break/continue that work with procedures               < TODO current task
+	2 tagged break/continue that work with labels                   < TODO current task
 	3 memory optimizations
 		1 fix lost space in arena
 		2 make structs smaller
@@ -2984,13 +3050,37 @@ type_ast roll_statement_expression(
 		}
 		*iter_type.data.function.left = range_type;
 		*iter_type.data.function.right = expected_type;
-		roll_expression(roll, tree, mem, statement->data.for_statement.procedure, iter_type, 0, NULL, 0, err);//TODO make sure the procedure is compatible
+		roll_expression(roll, tree, mem, statement->data.for_statement.procedure, iter_type, 0, NULL, 0, err);
 		if (*err != 0){
 			return expected_type;
 		}
 		statement->type = expected_type;
 		return expected_type;
 
+	case BREAK_STATEMENT:
+		if (as_expression == 1){
+			snprintf(err, ERROR_BUFFER, " [!] 'break' jump directive can only be statement for now\n");
+			return expected_type;
+		}
+		type_ast brktemp = expected_type;
+		expected_type.tag = PROCEDURE_TYPE;
+		expected_type.data.pointer = pool_request(mem, sizeof(type_ast));
+		*expected_type.data.pointer = brktemp;
+		//TODO for both of these check if the label is valid
+		statement->type = expected_type;
+		return expected_type;
+	case CONTINUE_STATEMENT:
+		if (as_expression == 1){
+			snprintf(err, ERROR_BUFFER, " [!] 'continue' jump directive can only be statement for now\n");
+			return expected_type;
+		}
+		type_ast cnttemp = expected_type;
+		expected_type.tag = PROCEDURE_TYPE;
+		expected_type.data.pointer = pool_request(mem, sizeof(type_ast));
+		*expected_type.data.pointer = cnttemp;
+		//TODO for both of these check if the label is valid
+		statement->type = expected_type;
+		return expected_type;
 	default:
 		snprintf(err, ERROR_BUFFER, " [!] Unknown statement type %u\n", statement->tag);
 	}
@@ -3534,6 +3624,18 @@ void show_statement(const statement_ast* const statement, uint8_t indent){
 		show_expression(statement->data.for_statement.inc, indent);
 		printf("\033[1;31mdo \033[0m");
 		show_expression(statement->data.for_statement.procedure, indent);
+		break;
+	case BREAK_STATEMENT:
+		printf("\033[1;31mbreak \033[0m");
+		if (statement->labeled == 1){
+			show_binding(&statement->label);
+		}
+		break;
+	case CONTINUE_STATEMENT:
+		printf("\033[1;31mcontinue \033[0m");
+		if (statement->labeled == 1){
+			show_binding(&statement->label);
+		}
 		break;
 	default:
 		printf("<UNKNOWN STATEMENT> ");

@@ -105,6 +105,8 @@ typedef enum TOKEN_TYPES {
 	TOKEN_CONST,
 	TOKEN_CAST,
 	TOKEN_SIZEOF,
+	TOKEN_BREAK,
+	TOKEN_CONTINUE,
 	TOKEN_EOF
 } TOKEN_TYPE_TAG;
 
@@ -148,7 +150,9 @@ uint8_t lex_float(const char* const string);
 typedef enum LABEL_REQUEST {
 	LABEL_FULFILLED=0,
 	LABEL_WAITING,
-	LABEL_REQUESTED
+	LABEL_REQUESTED,
+	LABEL_EXPIRED,
+	LABEL_OVERDUE
 } LABEL_REQUEST;
 
 uint8_t lex_label(const char* const string);
@@ -246,7 +250,9 @@ void show_binding(const binding_ast* const binding);
 typedef struct statement_ast{
 	enum {
 		IF_STATEMENT,
-		FOR_STATEMENT
+		FOR_STATEMENT,
+		BREAK_STATEMENT,
+		CONTINUE_STATEMENT
 	} tag;
 	union {
 		struct {
