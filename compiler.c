@@ -1822,6 +1822,41 @@ void pop_binding(scope* const s){
 	s->binding_count -= 1;
 }
 
+void push_label_frame(scope* const s){
+	s->label_frame_stack[s->label_frame_count] = s->label_count;
+	s->label_frame_count += 1;
+}
+
+void pop_label_frame(scope* const s){
+	s->label_frame_count -= 1;
+	s->label_count = s->label_frame_stack[s->label_frame_count];
+}
+
+void push_label(scope* const s, binding_ast binding){
+	s->label_stack[s->label_count] = binding;
+	s->label_count += 1;
+}
+
+uint8_t is_label_valid(scope* const s, binding_ast destination){
+	for (uint16_t i = 0;i<s->label_count;++i){
+		const char* a = destination.name.string+1;
+		const char* b = s->label_stack[s->label_count-(i+1)].name.string;
+		uint8_t found = 1;
+		while (*b != ':' && *a != '\0'){
+			if (*b != *a){
+				found = 0;
+				break;
+			}
+			a += 1;
+			b += 1;
+		}
+		if (found == 1){
+			return 1;
+		}
+	}
+	return 0;
+}
+
 void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* err){
 	for (uint32_t i = 0;i<tree->func_c;++i){
 		function_ast* f = &tree->func_v[i];
@@ -1840,6 +1875,8 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 	1 module system
 	2 tagged break/continue that work with labels                   < TODO current task
+		0 finish validation with push_label/frame
+		1 comparison function
 	3 memory optimizations
 		1 fix lost space in arena
 		2 make structs smaller
@@ -1852,6 +1889,9 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 	5 matches on enumerated struct union, maybe with @ / enum access with tag?
 	6 struct ordering
 	7 code generation
+		0 C proof of concept understanding
+		1 maybe a native x86 or arm
+		2 custom vm for game OS
 	8 Good error system
 	9 parametric types
 
@@ -2994,11 +3034,17 @@ type_ast roll_statement_expression(
 				return pred;
 			}
 		}
+		push_label_frame(roll);
+		if (statement->labeled == 1){
+			push_label(roll, statement->label);
+		}
 		type_ast btype = roll_expression(roll, tree, mem, statement->data.if_statement.branch, expected_type, 0, NULL, 0, err);
 		if (*err != 0){
+			pop_label_frame(roll);
 			return expected_type;
 		}
 		if (statement->data.if_statement.alternate == NULL){
+			pop_label_frame(roll);
 			if (as_expression == 0){
 				return expected_type;
 			}
@@ -3006,6 +3052,7 @@ type_ast roll_statement_expression(
 			return expected_type;
 		}
 		type_ast atype = roll_expression(roll, tree, mem, statement->data.if_statement.alternate, expected_type, 0, NULL, 0, err);
+		pop_label_frame(roll);
 		if (*err != 0){
 			return expected_type;
 		}
@@ -3033,8 +3080,13 @@ type_ast roll_statement_expression(
 		if (*err != 0){
 			return expected_type;
 		}
+		push_label_frame(roll);
+		if (statement->labeled == 1){
+			push_label(roll, statement->label);
+		}
 		roll_expression(roll, tree, mem, statement->data.for_statement.end, range_type, 0, NULL, 0, err);
 		if (*err != 0){
+			pop_label_frame(roll);
 			return expected_type;
 		}
 		type_ast iter_type = {
@@ -3046,11 +3098,13 @@ type_ast roll_statement_expression(
 		*iter_type.data.function.right = range_type;
 		roll_expression(roll, tree, mem, statement->data.for_statement.inc, iter_type, 0, NULL, 0, err);
 		if (*err != 0){
+			pop_label_frame(roll);
 			return expected_type;
 		}
 		*iter_type.data.function.left = range_type;
 		*iter_type.data.function.right = expected_type;
 		roll_expression(roll, tree, mem, statement->data.for_statement.procedure, iter_type, 0, NULL, 0, err);
+		pop_label_frame(roll);
 		if (*err != 0){
 			return expected_type;
 		}
@@ -3066,9 +3120,15 @@ type_ast roll_statement_expression(
 		expected_type.tag = PROCEDURE_TYPE;
 		expected_type.data.pointer = pool_request(mem, sizeof(type_ast));
 		*expected_type.data.pointer = brktemp;
-		//TODO for both of these check if the label is valid
+		if (statement->labeled == 1){
+			if (is_label_valid(roll, statement->label) == 0){
+				snprintf(err, ERROR_BUFFER, " [!] 'break' jump directive has invalid destination\n");
+				return expected_type;
+			}
+		}
 		statement->type = expected_type;
 		return expected_type;
+
 	case CONTINUE_STATEMENT:
 		if (as_expression == 1){
 			snprintf(err, ERROR_BUFFER, " [!] 'continue' jump directive can only be statement for now\n");
@@ -3078,9 +3138,15 @@ type_ast roll_statement_expression(
 		expected_type.tag = PROCEDURE_TYPE;
 		expected_type.data.pointer = pool_request(mem, sizeof(type_ast));
 		*expected_type.data.pointer = cnttemp;
-		//TODO for both of these check if the label is valid
+		if (statement->labeled == 1){
+			if (is_label_valid(roll, statement->label) == 0){
+				snprintf(err, ERROR_BUFFER, " [!] 'continue' jump directive has invalid destination\n");
+				return expected_type;
+			}
+		}
 		statement->type = expected_type;
 		return expected_type;
+
 	default:
 		snprintf(err, ERROR_BUFFER, " [!] Unknown statement type %u\n", statement->tag);
 	}
@@ -3310,7 +3376,13 @@ int compile_from_file(char* filename){
 		.frame_count=0,
 		.frame_capacity=MAX_STACK_MEMBERS,
 		.captures=pool_request(&mem, sizeof(capture_stack)),
-		.capture_frame=0
+		.capture_frame=0,
+		.label_stack = pool_request(&mem, MAX_STACK_MEMBERS*sizeof(binding_ast)),
+		.label_count=0,
+		.label_capacity=MAX_STACK_MEMBERS,
+		.label_frame_stack = pool_request(&mem, MAX_STACK_MEMBERS*sizeof(uint16_t)),
+		.label_frame_count=0,
+		.label_frame_capacity=MAX_STACK_MEMBERS
 	};
 	*roll.captures = (capture_stack){
 		.prev=NULL,

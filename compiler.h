@@ -432,6 +432,12 @@ typedef struct scope {
 	capture_stack* captures;
 	uint16_t capture_frame;
 	uint16_t builtin_stack_frame;
+	binding_ast* label_stack;
+	uint16_t label_count;
+	uint16_t label_capacity;
+	uint16_t* label_frame_stack;
+	uint16_t label_frame_count;
+	uint16_t label_frame_capacity;
 } scope;
 
 void push_capture_frame(scope* const roll, pool* const mem);
@@ -443,6 +449,11 @@ void push_frame(scope* const s);
 void pop_frame(scope* const s);
 void push_binding(scope* const s, binding_ast binding);
 void pop_binding(scope* const s);
+
+void push_label_frame(scope* const s);
+void pop_label_frame(scope* const s);
+void push_label(scope* const s, binding_ast binding);
+
 void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* err);
 void roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err);
 void roll_struct_type(scope* const roll, ast* const tree, pool* const mem, structure_ast* const target, char* err);
