@@ -1837,10 +1837,23 @@ void push_label(scope* const s, binding_ast binding){
 	s->label_count += 1;
 }
 
+void push_label_scope(scope* const s){
+	s->label_scope_stack[s->label_scope_count] = s->label_count;
+	s->label_scope_count += 1;
+}
+
+void pop_label_scope(scope* const s){
+	s->label_scope_count -= 1;
+}
+
 uint8_t is_label_valid(scope* const s, binding_ast destination){
-	for (uint16_t i = 0;i<s->label_count;++i){
+	uint16_t end = 0;
+	if (s->label_scope_count != 0){
+		end = s->label_scope_stack[s->label_scope_count-1];
+	}
+	for (uint16_t i = s->label_count;i>end;--i){
 		const char* a = destination.name.string+1;
-		const char* b = s->label_stack[s->label_count-(i+1)].name.string;
+		const char* b = s->label_stack[i-1].name.string;
 		uint8_t found = 1;
 		while (*b != ':' && *a != '\0'){
 			if (*b != *a){
@@ -1874,26 +1887,23 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 /* TODO LIST
 
 	1 module system
-	2 tagged break/continue that work with labels                   < TODO current task
-		0 finish validation with push_label/frame
-		1 comparison function
-	3 memory optimizations
+	2 memory optimizations
 		1 fix lost space in arena
 		2 make structs smaller
 		3 read from file at start, skipping system call on subsequent parse_token calls
-	4 Finish semantic pass stuff
+	3 Finish semantic pass stuff
 		1 all the little todos
 		2 fix type equality
 		3 group function application into distinct calls for defined top level functions
 		4 create structures for partial application cases
-	5 matches on enumerated struct union, maybe with @ / enum access with tag?
-	6 struct ordering
-	7 code generation
+	4 matches on enumerated struct union, maybe with @ / enum access with tag?
+	5 struct ordering
+	6 code generation
 		0 C proof of concept understanding
 		1 maybe a native x86 or arm
 		2 custom vm for game OS
-	8 Good error system
-	9 parametric types
+	7 Good error system
+	8 parametric types and monomorphisation
 
 */
 
@@ -2088,6 +2098,7 @@ type_ast roll_expression(
 		if (needs_capture == 1){
 			push_capture_binding(roll, scope_item);
 		}
+		push_label_scope(roll);
 		if (expr->data.closure.func->expression.tag == LAMBDA_EXPRESSION){
 			push_binding(roll, scope_item);
 			push_capture_frame(roll, mem);
@@ -2098,6 +2109,7 @@ type_ast roll_expression(
 			roll_expression(roll, tree, mem, equation, desired, 0, NULL, 1, err);
 			push_binding(roll, scope_item);
 		}
+		pop_label_scope(roll);
 		binding_ast* captured_binds = NULL;
 		uint16_t num_caps = pop_capture_frame(roll, &captured_binds);
 		if (expr->data.closure.func->expression.tag == LAMBDA_EXPRESSION){
@@ -3381,8 +3393,10 @@ int compile_from_file(char* filename){
 		.label_count=0,
 		.label_capacity=MAX_STACK_MEMBERS,
 		.label_frame_stack = pool_request(&mem, MAX_STACK_MEMBERS*sizeof(uint16_t)),
+		.label_scope_stack = pool_request(&mem, MAX_STACK_MEMBERS*sizeof(uint16_t)),
 		.label_frame_count=0,
-		.label_frame_capacity=MAX_STACK_MEMBERS
+		.label_frame_capacity=MAX_STACK_MEMBERS,
+		.label_scope_count=0
 	};
 	*roll.captures = (capture_stack){
 		.prev=NULL,
