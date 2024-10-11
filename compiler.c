@@ -180,7 +180,7 @@ uint8_t lex_identifier(const char* const string){
 		return 1;
 	}
 	for (; *c != '\0';++c){
-		if (!isupper(*c) && !islower(*c) && !isdigit(*c) && (*c != '_')){
+		if (!isalnum(*c) && (*c != '_')){
 			return 1;
 		}
 	}
@@ -193,7 +193,7 @@ uint8_t lex_label(const char* const string){
 		return 1;
 	}
 	for (; *(c+1) != '\0';++c){
-		if (!isupper(*c) && !islower(*c) && !isdigit(*c) && (*c != '_')){
+		if (!isalnum(*c) &&(*c != '_')){
 			return 1;
 		}
 	}
@@ -213,7 +213,7 @@ uint8_t lex_label_jump(const char* const string){
 		return 1;
 	}
 	for (; *c != '\0';++c){
-		if (!isupper(*c) && !islower(*c) && !isdigit(*c) && (*c != '_')){
+		if (!isalnum(*c) &&(*c != '_')){
 			return 1;
 		}
 	}
@@ -251,7 +251,7 @@ uint32_t identifier_subtype(uint32_t type_index, char* const content){
 }
 
 uint8_t lex_syntactic(const char* const string){
-	if (strlen(string) == 1){
+	if (string[1] == '\0'){
 		switch(string[0]){
 		case '{':
 		case '}':
@@ -1887,23 +1887,32 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 /* TODO LIST
 
 	1 module system
-	2 memory optimizations
-		1 fix lost space in arena
-		2 make structs smaller
-		3 read from file at start, skipping system call on subsequent parse_token calls
-	3 Finish semantic pass stuff
+	2 parametric types/ buffers/ pointers
+	3 memory optimizations                         < TODO current task
+		1 targetted hashmaps for parsing keywords
+		2 fix lost space in arena
+			1 separate buffers for different nodes
+			2 node size starts small and can resize, old can be reused for next node
+			3 resizing doesnt need a copy if last node in buffer
+		3 make structs smaller, just reorder for now
+		4 read from file at start, skipping system call on subsequent parse_token calls
+			1 will need to fix backtracking
+			2 can rewrite parser backtrack moments and statement parsing with new system
+	4 Finish semantic pass stuff
 		1 all the little todos
 		2 fix type equality
-		3 group function application into distinct calls for defined top level functions
-		4 create structures for partial application cases
-	4 matches on enumerated struct union, maybe with @ / enum access with tag?
-	5 struct ordering
-	6 code generation
-		0 C proof of concept understanding
-		1 maybe a native x86 or arm
-		2 custom vm for game OS
-	7 Good error system
-	8 parametric types and monomorphisation
+	5 IR
+		1 group function application into distinct calls for defined top level functions
+		2 create structures for partial application cases
+	6 determine what code will be used and what code will not be used
+		1 monomorphization of parametric types/functions that take them
+	7 matches on enumerated struct union, maybe with @ / enum access with tag?
+	8 struct ordering
+	9 code generation
+		1 C proof of concept understanding
+		2 maybe a native x86 or arm or risc-V
+		3 custom vm for game OS
+	10 Good error system
 
 */
 
@@ -2998,7 +3007,7 @@ uint8_t struct_cmp(structure_ast* const a, structure_ast* const b){
 type_ast* scope_contains(scope* const roll, binding_ast* const binding, uint8_t* needs_capturing){
 	for (uint16_t i = 0;i<roll->binding_count;++i){
 		uint16_t index = roll->binding_count - (i+1);
-		if (strcmp(roll->binding_stack[index].name.string, binding->name.string) == 0){
+		if (strncmp(roll->binding_stack[index].name.string, binding->name.string, TOKEN_MAX) == 0){
 			if ((needs_capturing != NULL)
 			 && (index < roll->captures->binding_count_point)
 			 && (index >= roll->builtin_stack_frame)){
@@ -3535,6 +3544,7 @@ void show_token(const token* const tok){
 }
 
 void show_ast(const ast* const tree){
+	return;
 	for (size_t i = 0;i<tree->import_c;++i){
 		printf("\033[1;34mimport\033[0m ");
 		show_token(&tree->import_v[i]);
@@ -3887,6 +3897,5 @@ int main(int argc, char** argv){
 		printf("\n");
 		return 0;
 	}
-	compile_from_file(argv[1]);
 	return 0;
 }
