@@ -13,14 +13,16 @@ MAP_IMPL(alias_ast)
 MAP_IMPL(constant_ast)
 MAP_IMPL(TOKEN_TYPE_TAG)
 
-uint8_t issymbol(char c){
+uint8_t
+issymbol(char c){
 	return (c > 32 && c < 48)
 		|| (c > 122 && c < 127)
 		|| (c > 90 && c < 97)
 		|| (c > 57 && c < 65);
 }
 
-ast parse(token* const tokens, pool* const mem, uint64_t token_count, char* err){
+ast
+parse(token* const tokens, pool* const mem, uint64_t token_count, char* err){
 	lexer lex = {
 		.tokens=tokens,
 		.token_count=token_count,
@@ -156,7 +158,8 @@ ast parse(token* const tokens, pool* const mem, uint64_t token_count, char* err)
 	return tree;
 }
 
-uint8_t parse_import(ast* const tree, lexer* const lex, pool* const mem, char* err){
+uint8_t
+parse_import(ast* const tree, lexer* const lex, pool* const mem, char* err){
 	token filename = lex->tokens[++lex->index];
 	if (filename.type != TOKEN_IDENTIFIER){
 		snprintf(err, ERROR_BUFFER, " <!> Parsing Error : Tried to import non identifier: '%s'\n", filename.string);
@@ -172,7 +175,8 @@ uint8_t parse_import(ast* const tree, lexer* const lex, pool* const mem, char* e
 	return 0;
 }
 
-structure_ast parse_struct(lexer* const lex, pool* const mem, char* err){
+structure_ast
+parse_struct(lexer* const lex, pool* const mem, char* err){
 	structure_ast outer = {
 		.binding_v=pool_request(mem, sizeof(binding_ast)*MAX_MEMBERS),
 		.union_v=NULL,
@@ -261,7 +265,8 @@ structure_ast parse_struct(lexer* const lex, pool* const mem, char* err){
 	return outer;
 }
 
-type_ast parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t consume){
+type_ast
+parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t consume){
 	token name = lex->tokens[lex->index];
 	type_ast outer = (type_ast){
 		.tag=USER_TYPE,
@@ -419,7 +424,8 @@ type_ast parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG
 	return (type_ast){.tag=NONE_TYPE};
 }
 
-new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err){
+new_type_ast
+parse_new_type(lexer* const lex, pool* const mem, char* err){
 	token name = lex->tokens[++lex->index];
 	if (name.type != TOKEN_IDENTIFIER){
 		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected identifier for type new_type name, found '%s'\n", name.string);
@@ -436,7 +442,8 @@ new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err){
 	};
 }
 
-constant_ast parse_constant(lexer* const lex, pool* const mem, char* err){
+constant_ast
+parse_constant(lexer* const lex, pool* const mem, char* err){
 	token name = lex->tokens[++lex->index];
 	constant_ast constant = {
 		.value.type.tag=PRIMITIVE_TYPE,
@@ -479,7 +486,8 @@ constant_ast parse_constant(lexer* const lex, pool* const mem, char* err){
 	return constant;
 }
 
-alias_ast parse_alias(lexer* const lex, pool* const mem, char* err){
+alias_ast
+parse_alias(lexer* const lex, pool* const mem, char* err){
 	token name = lex->tokens[++lex->index];
 	if (name.type != TOKEN_IDENTIFIER){
 		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected identifier for type new_type name, found '%s'\n", name.string);
@@ -496,7 +504,8 @@ alias_ast parse_alias(lexer* const lex, pool* const mem, char* err){
 	};
 }
 
-function_ast parse_function(lexer* const lex, pool* const mem, char* err, uint8_t allowed_enclosing){
+function_ast
+parse_function(lexer* const lex, pool* const mem, char* err, uint8_t allowed_enclosing){
 	type_ast type = parse_type(lex, mem, err, TOKEN_IDENTIFIER, 0);
 	if (*err != 0){
 		return (function_ast){
@@ -530,7 +539,8 @@ function_ast parse_function(lexer* const lex, pool* const mem, char* err, uint8_
 	};
 }
 
-expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t* simple){
+expression_ast
+parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t* simple){
 	expression_ast outer = {
 		.tag=LAMBDA_EXPRESSION,
 		.data.lambda={
@@ -623,7 +633,8 @@ expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_
 	return outer;
 }
 
-function_ast try_function(lexer* const lex, pool* const mem, char* err){
+function_ast
+try_function(lexer* const lex, pool* const mem, char* err){
 	token expr = lex->tokens[lex->index];
 	function_ast func;
 	switch(expr.type){
@@ -656,14 +667,16 @@ function_ast try_function(lexer* const lex, pool* const mem, char* err){
 	return func;
 }
 
-expression_ast unwrap_single_application(expression_ast single){
+expression_ast
+unwrap_single_application(expression_ast single){
 	while (single.tag == APPLICATION_EXPRESSION && single.data.block.expr_c == 1){
 		single = single.data.block.expr_v[0];
 	}
 	return single;
 }
 
-expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, expression_ast first){
+expression_ast
+parse_block_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, expression_ast first){
 	expression_ast outer = {
 		.tag=BLOCK_EXPRESSION,
 		.data.block.type={.tag=NONE_TYPE},
@@ -700,7 +713,8 @@ expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* e
 	return outer;
 }
 
-expression_ast parse_application_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t allow_block, int8_t limit){
+expression_ast
+parse_application_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t allow_block, int8_t limit){
 	token expr = lex->tokens[lex->index];
 	expression_ast outer = {
 		.tag=APPLICATION_EXPRESSION,
@@ -1251,7 +1265,8 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, c
 	return outer;
 }
 
-literal_ast parse_struct_literal(lexer* const lex, pool* const mem, char* err){
+literal_ast
+parse_struct_literal(lexer* const lex, pool* const mem, char* err){
 	literal_ast lit = {
 		.tag=STRUCT_LITERAL,
 		.type.tag=NONE_TYPE
@@ -1294,17 +1309,20 @@ literal_ast parse_struct_literal(lexer* const lex, pool* const mem, char* err){
 	}
 }
 
-uint64_t parse_save(lexer* const lex, pool* const mem){
+uint64_t
+parse_save(lexer* const lex, pool* const mem){
 	pool_save(mem);
 	return lex->index;
 }
 
-void parse_load(lexer* const lex, pool* const mem, uint64_t index){
+void
+parse_load(lexer* const lex, pool* const mem, uint64_t index){
 	pool_load(mem);
 	lex->index = index;
 }
 
-literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err){
+literal_ast
+parse_array_literal(lexer* const lex, pool* const mem, char* err){
 	literal_ast lit = {
 		.tag=ARRAY_LITERAL,
 		.type.tag=NONE_TYPE
@@ -1349,7 +1367,8 @@ literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err){
 	return lit;
 }
 
-binding_ast parse_char_literal(lexer* const lex, pool* const mem, char* err){
+binding_ast
+parse_char_literal(lexer* const lex, pool* const mem, char* err){
 	token tok = lex->tokens[lex->index];
 	binding_ast char_lit = {.type.tag=NONE_TYPE};
 	//TODO escape sequences
@@ -1363,7 +1382,8 @@ binding_ast parse_char_literal(lexer* const lex, pool* const mem, char* err){
 	return char_lit;
 }
 
-literal_ast parse_string_literal(lexer* const lex, pool* const mem, char* err){
+literal_ast
+parse_string_literal(lexer* const lex, pool* const mem, char* err){
 	literal_ast lit = {
 		.tag=STRING_LITERAL,
 		.type.tag=NONE_TYPE
@@ -1374,50 +1394,60 @@ literal_ast parse_string_literal(lexer* const lex, pool* const mem, char* err){
 	return lit;
 }
 
-void push_frame(scope* const s){
+void
+push_frame(scope* const s){
 	s->frame_stack[s->frame_count] = s->binding_count;
 	s->frame_count += 1;
 }
 
-void pop_frame(scope* const s){
+void
+pop_frame(scope* const s){
 	s->frame_count -= 1;
 	s->binding_count = s->frame_stack[s->frame_count];
 }
 
-void push_binding(scope* const s, binding_ast binding){
+void
+push_binding(scope* const s, binding_ast binding){
 	s->binding_stack[s->binding_count] = binding;
 	s->binding_count += 1;
 }
 
-void pop_binding(scope* const s){
+void
+pop_binding(scope* const s){
 	s->binding_count -= 1;
 }
 
-void push_label_frame(scope* const s){
+void
+push_label_frame(scope* const s){
 	s->label_frame_stack[s->label_frame_count] = s->label_count;
 	s->label_frame_count += 1;
 }
 
-void pop_label_frame(scope* const s){
+void
+pop_label_frame(scope* const s){
 	s->label_frame_count -= 1;
 	s->label_count = s->label_frame_stack[s->label_frame_count];
 }
 
-void push_label(scope* const s, binding_ast binding){
+void
+push_label(scope* const s, binding_ast binding){
 	s->label_stack[s->label_count] = binding;
 	s->label_count += 1;
 }
 
-void push_label_scope(scope* const s){
+void
+push_label_scope(scope* const s){
 	s->label_scope_stack[s->label_scope_count] = s->label_count;
 	s->label_scope_count += 1;
 }
 
-void pop_label_scope(scope* const s){
+void
+pop_label_scope(scope* const s){
 	s->label_scope_count -= 1;
 }
 
-uint8_t is_label_valid(scope* const s, binding_ast destination){
+uint8_t
+is_label_valid(scope* const s, binding_ast destination){
 	uint16_t end = 0;
 	if (s->label_scope_count != 0){
 		end = s->label_scope_stack[s->label_scope_count-1];
@@ -1441,7 +1471,8 @@ uint8_t is_label_valid(scope* const s, binding_ast destination){
 	return 0;
 }
 
-void transform_ast(ast* const tree, pool* const mem, char* err){
+void
+transform_ast(ast* const tree, pool* const mem, char* err){
 	scope roll = {
 		.binding_stack = pool_request(mem, MAX_STACK_MEMBERS*sizeof(binding_ast)),
 		.frame_stack = pool_request(mem, MAX_STACK_MEMBERS*sizeof(uint16_t)),
@@ -1481,9 +1512,11 @@ void transform_ast(ast* const tree, pool* const mem, char* err){
 	}
 }
 
-/* TODO LIST
+/*
+ * TODO LIST
 
-    0 procedures can just return, thats all, no other anything, just normal functions otherwise
+ 
+ 0 procedures can just return, thats all, no other anything, just normal functions otherwise
 	1 module system
 	2 parametric types/ buffers/ pointers
 	3 memory optimizations                         < TODO current task
@@ -1510,7 +1543,8 @@ void transform_ast(ast* const tree, pool* const mem, char* err){
 
 */
 
-void handle_procedural_statement(scope* const roll, ast* const tree, pool* const mem, expression_ast* const line, type_ast expected_type, char* const err){
+void
+handle_procedural_statement(scope* const roll, ast* const tree, pool* const mem, expression_ast* const line, type_ast expected_type, char* const err){
 	if (expected_type.tag == PROCEDURE_TYPE){
 		expected_type = *expected_type.data.pointer;
 	}
@@ -1532,7 +1566,8 @@ void handle_procedural_statement(scope* const roll, ast* const tree, pool* const
 }
 
 void roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err){
-	switch (target->tag){
+	switch
+		(target->tag){
 	case FUNCTION_TYPE:
 		roll_type(roll, tree, mem, target->data.function.left, err);
 		if (*err != 0){
@@ -1575,7 +1610,8 @@ void roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* co
 	}
 }
 
-void roll_struct_type(scope* const roll, ast* const tree, pool* const mem, structure_ast* const target, char* err){
+void
+roll_struct_type(scope* const roll, ast* const tree, pool* const mem, structure_ast* const target, char* err){
 	if (target == NULL){
 		return;
 	}
@@ -1593,7 +1629,8 @@ void roll_struct_type(scope* const roll, ast* const tree, pool* const mem, struc
 	}
 }
 
-type_ast roll_expression(
+type_ast
+roll_expression(
 	scope* const roll,
 	ast* const tree,
 	pool* const mem,
@@ -2312,11 +2349,13 @@ type_ast roll_expression(
 	return expected_type;
 }
 
-uint64_t struct_size_helper(ast* const tree, structure_ast target_struct, uint64_t rolling_size, char* err){
+uint64_t
+struct_size_helper(ast* const tree, structure_ast target_struct, uint64_t rolling_size, char* err){
 	return rolling_size;//TODO
 }
 
-uint64_t type_size_helper(ast* const tree, type_ast target_type, uint64_t rolling_size, char* err){
+uint64_t
+type_size_helper(ast* const tree, type_ast target_type, uint64_t rolling_size, char* err){
 	switch(target_type.tag){
 	case FUNCTION_TYPE:
 		return rolling_size+8;
@@ -2355,11 +2394,13 @@ uint64_t type_size_helper(ast* const tree, type_ast target_type, uint64_t rollin
 	return 0;
 }
 
-uint64_t type_size(ast* const tree, type_ast target_type, char* err){
+uint64_t type_size(ast*
+		const tree, type_ast target_type, char* err){
 	return type_size_helper(tree, target_type, 0, err);
 }
 
-void lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, binding_ast* captured_bindings, uint16_t total_captures, pool* const mem){
+void
+lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, binding_ast* captured_bindings, uint16_t total_captures, pool* const mem){
 	expr->data.lambda.type = captured_type;
 	expression_ast save_lambda = {
 		.tag=LAMBDA_EXPRESSION,
@@ -2408,7 +2449,8 @@ void lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, 
 	tree->func_c += 1;
 }
 
-type_ast prepend_captures(type_ast start, binding_ast* captures, uint16_t total_captures, pool* const mem){
+type_ast
+prepend_captures(type_ast start, binding_ast* captures, uint16_t total_captures, pool* const mem){
 	for (uint16_t i = 0;i<total_captures;++i){
 		binding_ast binding = captures[i];
 		type_ast outer = {
@@ -2423,7 +2465,8 @@ type_ast prepend_captures(type_ast start, binding_ast* captures, uint16_t total_
 	return start;
 }
 
-void push_capture_frame(scope* const roll, pool* const mem){
+void
+push_capture_frame(scope* const roll, pool* const mem){
 	capture_stack* target = roll->captures;
 	roll->capture_frame += 1;
 	if (target->next != NULL){
@@ -2442,7 +2485,8 @@ void push_capture_frame(scope* const roll, pool* const mem){
 	roll->captures = target;
 }
 
-uint16_t pop_capture_frame(scope* const roll, binding_ast** list_result){
+uint16_t
+pop_capture_frame(scope* const roll, binding_ast** list_result){
 	if (list_result != NULL){
 		*list_result = roll->captures->binding_list;
 	}
@@ -2451,7 +2495,8 @@ uint16_t pop_capture_frame(scope* const roll, binding_ast** list_result){
 	return size;
 }
 
-void push_capture_binding(scope* const roll, binding_ast binding){
+void
+push_capture_binding(scope* const roll, binding_ast binding){
 	if (roll->captures->size >= MAX_CAPTURES){
 		fprintf(stderr, "Capture limit exceeded in stack frame\n");
 		return;
@@ -2465,7 +2510,8 @@ void push_capture_binding(scope* const roll, binding_ast binding){
 	roll->captures->size += 1;
 }
 
-void reduce_aliases(ast* const tree, type_ast* left, type_ast* right){
+void
+reduce_aliases(ast* const tree, type_ast* left, type_ast* right){
 	while (left->tag == USER_TYPE || right->tag == USER_TYPE){
 		new_type_ast* left_alias = alias_ast_map_access(&tree->aliases, left->data.user.string);
 		new_type_ast* right_alias = alias_ast_map_access(&tree->aliases, right->data.user.string);
@@ -2484,7 +2530,8 @@ void reduce_aliases(ast* const tree, type_ast* left, type_ast* right){
 	}
 }
 
-type_ast resolve_alias(ast* const tree, type_ast root, char* err){
+type_ast
+resolve_alias(ast* const tree, type_ast root, char* err){
 	uint8_t found = 0;
 	while (root.tag == USER_TYPE){
 		new_type_ast* primitive_alias = alias_ast_map_access(&tree->aliases, root.data.user.string);
@@ -2500,7 +2547,8 @@ type_ast resolve_alias(ast* const tree, type_ast root, char* err){
 	return root;
 }
 
-type_ast resolve_type_or_alias(ast* const tree, type_ast root, char* err){
+type_ast
+resolve_type_or_alias(ast* const tree, type_ast root, char* err){
 	while (root.tag == USER_TYPE){
 		new_type_ast* primitive_new_type = new_type_ast_map_access(&tree->types, root.data.user.string);
 		if (primitive_new_type != NULL){
@@ -2515,7 +2563,8 @@ type_ast resolve_type_or_alias(ast* const tree, type_ast root, char* err){
 	return root;
 }
 
-type_ast apply_type(type_ast* const func, char* err){
+type_ast
+apply_type(type_ast* const func, char* err){
 	type_ast left = {.tag=NONE_TYPE};
 	if (func->tag != FUNCTION_TYPE){
 		snprintf(err, ERROR_BUFFER, " [!] Tried to set lambda to non function binding\n");
@@ -2526,7 +2575,8 @@ type_ast apply_type(type_ast* const func, char* err){
 	return left;
 }
 
-uint8_t type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose){
+uint8_t
+type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose){
 	if (a->tag == INTERNAL_ANY_TYPE || b->tag == INTERNAL_ANY_TYPE){
 		return 0;
 	}
@@ -2580,7 +2630,8 @@ uint8_t type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose)
 
 
 
-uint8_t struct_cmp(structure_ast* const a, structure_ast* const b){
+uint8_t
+struct_cmp(structure_ast* const a, structure_ast* const b){
 	if (a->union_c != b->union_c || a->binding_c != b->binding_c){
 		return 1;
 	}
@@ -2599,7 +2650,8 @@ uint8_t struct_cmp(structure_ast* const a, structure_ast* const b){
 	return 0;
 }
 
-type_ast* scope_contains(scope* const roll, binding_ast* const binding, uint8_t* needs_capturing){
+type_ast*
+scope_contains(scope* const roll, binding_ast* const binding, uint8_t* needs_capturing){
 	for (uint16_t i = 0;i<roll->binding_count;++i){
 		uint16_t index = roll->binding_count - (i+1);
 		if (strncmp(roll->binding_stack[index].name.string, binding->name.string, TOKEN_MAX) == 0){
@@ -2614,7 +2666,8 @@ type_ast* scope_contains(scope* const roll, binding_ast* const binding, uint8_t*
 	return NULL;
 }
 
-type_ast roll_statement_expression(
+type_ast
+roll_statement_expression(
 	scope* const roll,
 	ast* const tree,
 	pool* const mem,
@@ -2769,7 +2822,8 @@ type_ast roll_statement_expression(
 	return expected_type;
 }
 
-type_ast roll_literal_expression(
+type_ast
+roll_literal_expression(
 	scope* const roll,
 	ast* const tree,
 	pool* const mem,
@@ -2962,13 +3016,15 @@ type_ast roll_literal_expression(
 	return expected_type;
 }
 
-void hash_keyword(TOKEN_TYPE_TAG_map* keywords, const char* key, TOKEN_TYPE_TAG value){
+void
+hash_keyword(TOKEN_TYPE_TAG_map* keywords, const char* key, TOKEN_TYPE_TAG value){
 	TOKEN_TYPE_TAG* persistent_value = pool_request(keywords->mem, sizeof(TOKEN_TYPE_TAG));
 	*persistent_value = value;
 	TOKEN_TYPE_TAG_map_insert(keywords, key, persistent_value);
 }
 
-void add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords){
+void
+add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords){
 	hash_keyword(keywords, "if", TOKEN_IF);
 	hash_keyword(keywords, "else", TOKEN_ELSE);
 	hash_keyword(keywords, "for", TOKEN_FOR);
@@ -3028,7 +3084,8 @@ void add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords){
 	hash_keyword(keywords, "*/", TOKEN_MULTI_CLOSE);
 }
 
-token* lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_t* token_count, char* err){
+token*
+lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_t* token_count, char* err){
 	TOKEN_TYPE_TAG_map keywords = TOKEN_TYPE_TAG_map_init(mem);
 	add_keyword_hashes(&keywords);
 	*token_count = 0;
@@ -3250,7 +3307,8 @@ token* lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, 
 	return tokens;
 }
 
-int compile_file(char* filename){
+int
+compile_file(char* filename){
 	FILE* fd = fopen(filename, "r");
 	if (fd == NULL){
 		fprintf(stderr, "File not found '%s'\n", filename);
@@ -3268,7 +3326,8 @@ int compile_file(char* filename){
 	return comp;
 }
 
-int compile_cstr(pool* const read_buffer, uint64_t read_bytes){
+int
+compile_cstr(pool* const read_buffer, uint64_t read_bytes){
 	pool mem = pool_alloc(POOL_SIZE, POOL_STATIC);
 	char err[ERROR_BUFFER] = "\0";
 	uint64_t token_count = 0;
@@ -3308,7 +3367,8 @@ int compile_cstr(pool* const read_buffer, uint64_t read_bytes){
 	return 0;
 }
 
-void binary_int_builtin(scope* const roll, pool* const mem, token name){
+void
+binary_int_builtin(scope* const roll, pool* const mem, token name){
 	binding_ast builtin = {
 		.name=name,
 		.type={.tag=FUNCTION_TYPE}
@@ -3324,7 +3384,8 @@ void binary_int_builtin(scope* const roll, pool* const mem, token name){
 	push_binding(roll, builtin);
 }
 
-void binary_float_builtin(scope* const roll, pool* const mem, token name){
+void
+binary_float_builtin(scope* const roll, pool* const mem, token name){
 	binding_ast builtin = {
 		.name=name,
 		.type={.tag=FUNCTION_TYPE}
@@ -3340,7 +3401,8 @@ void binary_float_builtin(scope* const roll, pool* const mem, token name){
 	push_binding(roll, builtin);
 }
 
-void unary_int_builtin(scope* const roll, pool* const mem, token name){
+void
+unary_int_builtin(scope* const roll, pool* const mem, token name){
 	binding_ast builtin = {
 		.name=name,
 		.type={.tag=FUNCTION_TYPE}
@@ -3352,7 +3414,8 @@ void unary_int_builtin(scope* const roll, pool* const mem, token name){
 	push_binding(roll, builtin);
 }
 
-void push_builtins(scope* const roll, pool* const mem){
+void
+push_builtins(scope* const roll, pool* const mem){
 	binary_int_builtin(roll, mem, (token){ .len=1, .string="+", .type=TOKEN_ADD });
 	binary_int_builtin(roll, mem, (token){ .len=1, .string="-", .type=TOKEN_SUB });
 	binary_int_builtin(roll, mem, (token){ .len=1, .string="/", .type=TOKEN_DIV });
@@ -3416,12 +3479,14 @@ void push_builtins(scope* const roll, pool* const mem){
 	push_binding(roll, dealloc);
 }
 
-void show_token(const token* const tok){
+void
+show_token(const token* const tok){
 	printf("%.*s ", TOKEN_MAX, tok->string);
 	fflush(stdout);
 }
 
-void show_ast(const ast* const tree){
+void
+show_ast(const ast* const tree){
 	return;
 	for (size_t i = 0;i<tree->import_c;++i){
 		printf("\033[1;34mimport\033[0m ");
@@ -3456,13 +3521,15 @@ void show_ast(const ast* const tree){
 	printf("\n");
 }
 
-void indent_n(uint8_t n){
+void
+indent_n(uint8_t n){
 	for (uint8_t i = 0;i<n;++i){
 		printf("  ");
 	}
 }
 
-void show_structure(const structure_ast* const structure, uint8_t indent){
+void
+show_structure(const structure_ast* const structure, uint8_t indent){
 	for (size_t i = 0;i<structure->binding_c;++i){
 		show_binding(&structure->binding_v[i]);
 	}
@@ -3475,7 +3542,8 @@ void show_structure(const structure_ast* const structure, uint8_t indent){
 	}
 }
 
-void show_lambda(const lambda_ast* const lambda){
+void
+show_lambda(const lambda_ast* const lambda){
 	for (size_t i = 0;i<lambda->argc;++i){
 		show_token(&lambda->argv[i]);
 	}
@@ -3483,7 +3551,8 @@ void show_lambda(const lambda_ast* const lambda){
 	show_expression(lambda->expression, 1);
 }
 
-void show_type(const type_ast* const type){
+void
+show_type(const type_ast* const type){
 	switch (type->tag){
 	case FUNCTION_TYPE:
 		printf("\033[1;36m( \033[0m");
@@ -3569,11 +3638,13 @@ void show_type(const type_ast* const type){
 	}
 }
 
-void show_binding(const binding_ast* const binding){
+void
+show_binding(const binding_ast* const binding){
 	show_token(&binding->name);
 }
 
-void show_statement(const statement_ast* const statement, uint8_t indent){
+void
+show_statement(const statement_ast* const statement, uint8_t indent){
 	if (statement->labeled == 1){
 		printf("\033[1;31mlabel \033[0m");
 		show_binding(&statement->label);
@@ -3617,7 +3688,8 @@ void show_statement(const statement_ast* const statement, uint8_t indent){
 	}
 }
 
-void show_literal(const literal_ast* const lit){
+void
+show_literal(const literal_ast* const lit){
 	switch (lit->tag){
 	case STRING_LITERAL:
 		printf("\"%s\" ", lit->data.string.content);
@@ -3641,7 +3713,8 @@ void show_literal(const literal_ast* const lit){
 	}
 }
 
-void show_expression(const expression_ast* const expr, uint8_t indent){
+void
+show_expression(const expression_ast* const expr, uint8_t indent){
 	size_t i;
 	switch(expr->tag){
 	case BLOCK_EXPRESSION:
@@ -3732,26 +3805,30 @@ void show_expression(const expression_ast* const expr, uint8_t indent){
 	}
 }
 
-void show_new_type(const new_type_ast* const new_type){
+void
+show_new_type(const new_type_ast* const new_type){
 	show_type(&new_type->type);
 	show_token(&new_type->name);
 	printf("\n");
 }
 
-void show_constant(const constant_ast* const cnst){
+void
+show_constant(const constant_ast* const cnst){
 	show_token(&cnst->name);
 	printf(": ");
 	show_binding(&cnst->value);
 	printf("\n");
 }
 
-void show_alias(const alias_ast* const alias){
+void
+show_alias(const alias_ast* const alias){
 	show_type(&alias->type);
 	show_token(&alias->name);
 	printf("\n");
 }
 
-void show_function(const function_ast* const func){
+void
+show_function(const function_ast* const func){
 	show_type(&func->type);
 	show_token(&func->name);
 	if (func->enclosing){
@@ -3763,7 +3840,8 @@ void show_function(const function_ast* const func){
 	show_expression(&func->expression, 1);
 }
 
-int main(int argc, char** argv){
+int
+main(int argc, char** argv){
 	compile_file("correct.ka");
 	return 0;
 	if (argc < 2){
