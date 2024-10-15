@@ -282,20 +282,16 @@ typedef struct statement_ast{
 void show_statement(const statement_ast* const statement, uint8_t indent);
 
 typedef struct lambda_ast {
-	token* argv;
-	uint32_t argc;
 	type_ast type;
+	token* argv;
 	struct expression_ast* expression;
+	uint32_t argc;
 }lambda_ast;
 
 void show_lambda(const lambda_ast* const lambda);
 
 typedef struct literal_ast{
-	enum {
-		STRING_LITERAL,
-		ARRAY_LITERAL,
-		STRUCT_LITERAL
-	} tag;
+	type_ast type;
 	union {
 		struct {
 			char* content;
@@ -306,7 +302,11 @@ typedef struct literal_ast{
 			uint32_t member_c;
 		} array; // also used for struct
 	} data;
-	type_ast type;
+	enum {
+		STRING_LITERAL,
+		ARRAY_LITERAL,
+		STRUCT_LITERAL
+	} tag;
 } literal_ast;
 
 void show_literal(const literal_ast* const lit);
@@ -337,8 +337,8 @@ typedef struct expression_ast{
 		} block; // also used for application
 		struct {
 			binding_ast* capture_v;
-			uint32_t capture_c;
 			struct function_ast* func;
+			uint32_t capture_c;
 		} closure;
 		struct expression_ast* deref; // also used for access, return, ref
 		statement_ast statement;
@@ -350,8 +350,8 @@ typedef struct expression_ast{
 			type_ast type;
 		} cast;
 		struct {
-			struct expression_ast* target;
 			type_ast type;
+			struct expression_ast* target;
 			uint64_t size;
 		} size_of;
 	} data;
@@ -368,10 +368,10 @@ void show_alias(const alias_ast* const alias);
 void show_constant(const constant_ast* const cnst);
 
 typedef struct function_ast {
+	expression_ast expression;
 	type_ast type;
 	token name;
 	uint8_t enclosing;
-	expression_ast expression;
 } function_ast;
 
 MAP_DEF(function_ast)

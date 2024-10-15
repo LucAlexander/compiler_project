@@ -3274,7 +3274,7 @@ int compile_cstr(pool* const read_buffer, uint64_t read_bytes){
 	uint64_t token_count = 0;
 	printf("%lu bytes left\n", mem.left);
 	token* tokens = lex_cstr(read_buffer->buffer, read_bytes, &mem, &token_count, err);
-	printf("\nLexed\n");
+	printf("Lexed\n");
 	printf("%lu bytes left\n", mem.left);
 	pool_dealloc(read_buffer);
 	if (*err != 0){
