@@ -6,7 +6,10 @@
 
 #include "hashmap.h"
 
-#define POOL_SIZE 0x1000000
+#define READ_BUFFER_SIZE 0x1000000
+#define READ_TOKEN_CHUNK 0x1000
+#define STRING_CONTENT_BUFFER 0x1000000
+#define POOL_SIZE 0x2000000
 #define MAX_FUNCTIONS 10000
 #define MAX_ALIASES    1000
 #define MAX_IMPORTS     100
@@ -29,6 +32,8 @@ typedef enum TOKEN_TYPES {
 	TOKEN_FLOAT,
 	TOKEN_LABEL,
 	TOKEN_LABEL_JUMP,
+	TOKEN_CHAR,
+	TOKEN_STRING,
 	TOKEN_TYPE_COUNT,
 	TOKEN_IMPORT,
 	TOKEN_IF,
@@ -110,29 +115,33 @@ typedef enum TOKEN_TYPES {
 	TOKEN_EOF
 } TOKEN_TYPE_TAG;
 
+MAP_DEF(TOKEN_TYPE_TAG)
+
 typedef struct token {
 	uint32_t line;
 	uint32_t col;
 	uint32_t len;
-	char string[TOKEN_MAX];
+	char* string;
 	TOKEN_TYPE_TAG type;
 } token;
 
 void show_token(const token* const tok);
 
 typedef struct lexer {
-	FILE* fd;
-	uint32_t line;
-	uint32_t col;
-	uint32_t index;
-	uint32_t working;
-	char tok[TOKEN_MAX];
+	token* const tokens;
+	uint64_t token_count;
+	uint64_t index;
 } lexer;
 
-token create_token(lexer* const lex);
-token pass_comment(lexer* const lex, token tok);
-token parse_token(lexer* const lex);
-uint8_t parse_crawl(lexer* const lex, pool* const mem, char* content, uint32_t* length);
+uint64_t parse_save(lexer* const lex, pool* const mem);
+void parse_load(lexer* const lex, pool* const mem, uint64_t index);
+
+void hash_keyword(TOKEN_TYPE_TAG_map* keywords, const char* key, TOKEN_TYPE_TAG value);
+void add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords);
+
+token* lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_t* token_count, char* err);
+int compile_file(char* filename);
+int compile_cstr(pool* const read_buffer, uint64_t read_bytes);
 
 uint32_t subtype(uint32_t type_index, char* const content);
 uint8_t lex_identifier(const char* const string);
@@ -391,18 +400,18 @@ typedef struct ast{
 
 void show_ast(const ast* const tree);
 
-ast parse(FILE* fd, pool* const mem, char* err);
+ast parse(token* const tokens, pool* const mem, uint64_t token_count, char* err);
 uint8_t parse_import(ast* const tree, lexer* const lex, pool* const mem, char* err);
-type_ast parse_type(lexer* const lex, pool* const mem, char* err, token tok, TOKEN_TYPE_TAG end_token, uint8_t consume);
+type_ast parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t consume);
 new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err);
 alias_ast parse_alias(lexer* const lex, pool* const mem, char* err);
 constant_ast parse_constant(lexer* const lex, pool* const mem, char* err);
-function_ast parse_function(lexer* const lex, pool* const mem, token tok, char* err, uint8_t allowed_enclosing);
+function_ast parse_function(lexer* const lex, pool* const mem, char* err, uint8_t allowed_enclosing);
 expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t* simple);
-expression_ast parse_application_expression(lexer* const lex, pool* const mem, token expr, char* err, TOKEN_TYPE_TAG end_token, uint8_t allow_block, int8_t limit);
+expression_ast parse_application_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t allow_block, int8_t limit);
 expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, expression_ast first);
 expression_ast unwrap_single_application(expression_ast single);
-function_ast try_function(lexer* const lex, pool* const mem, token expr, char* err);
+function_ast try_function(lexer* const lex, pool* const mem, char* err);
 structure_ast parse_struct(lexer* const lex, pool* const mem, char* err);
 literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err);
 binding_ast parse_char_literal(lexer* const lex, pool* const mem, char* err);
@@ -458,7 +467,7 @@ void push_label(scope* const s, binding_ast binding);
 void push_label_scope(scope* const s);
 void pop_label_scope(scope* const s);
 
-void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* err);
+void transform_ast(ast* const tree, pool* const mem, char* err);
 void roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err);
 void roll_struct_type(scope* const roll, ast* const tree, pool* const mem, structure_ast* const target, char* err);
 type_ast roll_expression(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, type_ast expected_type, uint32_t argc, expression_ast* const argv, uint8_t prevent_lift, char* err);

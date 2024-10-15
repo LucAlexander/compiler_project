@@ -36,7 +36,8 @@ type##_map type##_map_init(pool* const mem);\
 uint8_t type##_bucket_insert(type##_map_bucket* bucket, pool* const mem, const char* const key, type* value);\
 type* type##_bucket_access(type##_map_bucket* bucket, const char* const key);\
 uint8_t type##_map_insert(type##_map* const m, const char* const key, type* value);\
-type* type##_map_access(type##_map* const m, const char* const key);
+type* type##_map_access(type##_map* const m, const char* const key);\
+type* type##_map_access_by_hash(type##_map* const m, uint32_t hash, const char* const key);
 
 
 #define MAP_IMPL(type)\
@@ -102,6 +103,11 @@ type* type##_map_access(type##_map* const m, const char* const key){\
 	int16_t c;\
 	const char* k = key;\
 	while ((c=*k++)) hash = ((hash<<5)+hash)+c;\
+	hash = hash%MAP_SIZE;\
+	return type##_bucket_access(&m->buckets[hash], key);\
+}\
+\
+type* type##_map_access_by_hash(type##_map* const m, uint32_t hash, const char* const key){\
 	hash = hash%MAP_SIZE;\
 	return type##_bucket_access(&m->buckets[hash], key);\
 }

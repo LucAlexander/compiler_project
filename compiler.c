@@ -11,161 +11,7 @@ MAP_IMPL(function_ast)
 MAP_IMPL(new_type_ast)
 MAP_IMPL(alias_ast)
 MAP_IMPL(constant_ast)
-
-token create_token(lexer* const lex){
-	uint32_t (*subtypes[TOKEN_TYPE_COUNT])(uint32_t, char* const) = {
-		identifier_subtype,
-		syntactic_subtype,
-		symbol_subtype,
-		no_subtype,
-		no_subtype,
-		no_subtype,
-		no_subtype
-	};
-	token tok = {
-		.line=lex->line,
-		.col=lex->col,
-		.len=lex->index,
-		.type=subtypes[lex->working](lex->working, lex->tok)
-	};
-	strncpy(tok.string, lex->tok, lex->index);
-	return tok;
-}
-
-token pass_comment(lexer* const lex, token tok){
-	char c;
-	switch (tok.type){
-	case TOKEN_COMMENT:
-		do{
-			c = fgetc(lex->fd);
-		} while (c != '\n' && c != EOF);
-		lex->index = 0;
-		return parse_token(lex);
-	case TOKEN_MULTI_OPEN:
-		do{
-			tok = parse_token(lex);
-		} while(tok.type != TOKEN_EOF && tok.type != TOKEN_MULTI_CLOSE);
-		return parse_token(lex);
-	default:
-		break;
-	}
-	return tok;
-}
-
-token parse_token(lexer* const lex){
-	if (lex->fd == NULL){
-		return (token){.type=TOKEN_EOF};
-	}
-	uint8_t err = 0;
-	char c;
-	uint8_t (*token_lexers[TOKEN_TYPE_COUNT])(const char* const) = {
-		lex_identifier,
-		lex_syntactic,
-		lex_symbol,
-		lex_integer,
-		lex_float,
-		lex_label,
-		lex_label_jump
-	};
-	while ((c = fgetc(lex->fd)) != EOF){
-		lex->col += 1;
-		switch(c){
-		case '\n':
-			lex->line += 1;
-			lex->col = 0;
-		case ' ':
-		case '\r':
-		case '\t':
-			if (lex->index > 0){
-				token complete = create_token(lex);
-				lex->index = 0;
-				return pass_comment(lex, complete);
-			}
-			continue;
-		}
-		lex->tok[lex->index] = c;
-		lex->tok[lex->index+1] = '\0';
-		if (lex->index == 0){
-			err = 1;
-			for (int i = 0;i<TOKEN_TYPE_COUNT;++i){
-				if (token_lexers[i](lex->tok) == 0){
-					lex->working = i;
-					err = 0;
-					break;
-				}
-			}
-			if (err == 0){
-				lex->index += 1;
-			}
-			else{
-				fprintf(stderr, "No token can start with %c\n", c);
-			}
-			continue;
-		}
-		lex->index += 1;
-		uint32_t last_working = lex->working;
-		while (token_lexers[lex->working](lex->tok) != 0){
-			if (lex->working < TOKEN_TYPE_COUNT-1){
-				lex->working += 1;
-				continue;
-			}
-			lex->tok[lex->index-1] = '\0';
-			lex->working = last_working;
-			token complete = create_token(lex);
-			err = 1;
-			lex->tok[0] = c;
-			lex->tok[1] = '\0';
-			lex->index = 1;
-			for (int i = 0;i<TOKEN_TYPE_COUNT;++i){
-				if (token_lexers[i](lex->tok) == 0){
-					lex->working = i;
-					err = 0;
-					break;
-				}
-			}
-			if (err != 0){
-				fprintf(stderr, "No token can start with %c\n", c);
-				lex->index = 0;
-			}
-			return pass_comment(lex, complete);
-		}
-		if (lex->index == TOKEN_MAX-1){
-			token complete = create_token(lex);
-			lex->index = 0;
-			return pass_comment(lex, complete);
-		}
-	}
-	return (token){.type=TOKEN_EOF};
-}
-
-uint8_t parse_crawl(lexer* const lex, pool* const mem, char* content, uint32_t* length){
-	char c;
-	for (size_t i = 0;i<lex->index;++i){
-		content[i] = lex->tok[i];
-		*length += 1;
-		pool_byte(mem);
-	}
-	content[*length] = '\0';
-	lex->tok[0] = '\0';
-	lex->index = 0;
-	while ((c=fgetc(lex->fd)) != EOF){
-		lex->col += 1;
-		switch (c){
-		case '\"':
-			return 0;
-		case '\n':
-			lex->line += 1;
-			lex->col = 0;
-		default:
-			content[*length] = c;
-			*length += 1;
-			pool_byte(mem);
-			content[*length] = '\0';
-			break;
-		}
-	}
-	return 1;
-}
+MAP_IMPL(TOKEN_TYPE_TAG)
 
 uint8_t issymbol(char c){
 	return (c > 32 && c < 48)
@@ -174,214 +20,11 @@ uint8_t issymbol(char c){
 		|| (c > 57 && c < 65);
 }
 
-uint8_t lex_identifier(const char* const string){
-	const char* c = string;
-	if (isdigit(*c)){
-		return 1;
-	}
-	for (; *c != '\0';++c){
-		if (!isalnum(*c) && (*c != '_')){
-			return 1;
-		}
-	}
-	return 0;
-}
-
-uint8_t lex_label(const char* const string){
-	const char* c = string;
-	if (isdigit(*c)){
-		return 1;
-	}
-	for (; *(c+1) != '\0';++c){
-		if (!isalnum(*c) &&(*c != '_')){
-			return 1;
-		}
-	}
-	if (*c == ':'){
-		return 0;
-	}
-	return 1;
-}
-
-uint8_t lex_label_jump(const char* const string){
-	const char* c = string;
-	if (*c != ':'){
-		return 1;
-	}
-	c += 1;
-	if (isdigit(*c)){
-		return 1;
-	}
-	for (; *c != '\0';++c){
-		if (!isalnum(*c) &&(*c != '_')){
-			return 1;
-		}
-	}
-	return 0;
-}
-
-uint32_t identifier_subtype(uint32_t type_index, char* const content){
-	if (strncmp(content, "if", TOKEN_MAX) == 0){ return TOKEN_IF; }
-	if (strncmp(content, "else", TOKEN_MAX) == 0){ return TOKEN_ELSE; }
-	if (strncmp(content, "for", TOKEN_MAX) == 0){ return TOKEN_FOR; }
-	if (strncmp(content, "using", TOKEN_MAX) == 0){ return TOKEN_IMPORT; }
-	if (strncmp(content, "match", TOKEN_MAX) == 0){ return TOKEN_MATCH; }
-	if (strncmp(content, "return", TOKEN_MAX) == 0){ return TOKEN_RETURN; }
-	if (strncmp(content, "u8", TOKEN_MAX) == 0){ return TOKEN_U8; }
-	if (strncmp(content, "u16", TOKEN_MAX) == 0){ return TOKEN_U16; }
-	if (strncmp(content, "u32", TOKEN_MAX) == 0){ return TOKEN_U32; }
-	if (strncmp(content, "u64", TOKEN_MAX) == 0){ return TOKEN_U64; }
-	if (strncmp(content, "i8", TOKEN_MAX) == 0){ return TOKEN_I8; }
-	if (strncmp(content, "i16", TOKEN_MAX) == 0){ return TOKEN_I16; }
-	if (strncmp(content, "i32", TOKEN_MAX) == 0){ return TOKEN_I32; }
-	if (strncmp(content, "i64", TOKEN_MAX) == 0){ return TOKEN_I64; }
-	if (strncmp(content, "f32", TOKEN_MAX) == 0){ return TOKEN_F32; }
-	if (strncmp(content, "f64", TOKEN_MAX) == 0){ return TOKEN_F64; }
-	if (strncmp(content, "type", TOKEN_MAX) == 0){ return TOKEN_TYPE; }
-	if (strncmp(content, "alias", TOKEN_MAX) == 0){ return TOKEN_ALIAS; }
-	if (strncmp(content, "var", TOKEN_MAX) == 0){ return TOKEN_MUTABLE; }
-	if (strncmp(content, "ptr", TOKEN_MAX) == 0){ return TOKEN_REF; }
-	if (strncmp(content, "procedure", TOKEN_MAX) == 0){ return TOKEN_PROC; }
-	if (strncmp(content, "constant", TOKEN_MAX) == 0){ return TOKEN_CONST; }
-	if (strncmp(content, "as", TOKEN_MAX) == 0){ return TOKEN_CAST; }
-	if (strncmp(content, "sizeof", TOKEN_MAX) == 0){ return TOKEN_SIZEOF; }
-	if (strncmp(content, "break", TOKEN_MAX) == 0){ return TOKEN_BREAK; }
-	if (strncmp(content, "continue", TOKEN_MAX) == 0){ return TOKEN_CONTINUE; }
-	return type_index;
-}
-
-uint8_t lex_syntactic(const char* const string){
-	if (string[1] == '\0'){
-		switch(string[0]){
-		case '{':
-		case '}':
-		case '[':
-		case ']':
-		case '(':
-		case ')':
-		case '"':
-		case '\'':
-		case '\\':
-		case ';':
-		case '.':
-		case '$':
-		case '#':
-		case ',':
-			return 0;
-		}
-	}
-	return 1;
-}
-
-uint32_t syntactic_subtype(uint32_t type_index, char* const content){
-	if (strncmp(content, "{", TOKEN_MAX) == 0){ return TOKEN_BRACE_OPEN; }
-	if (strncmp(content, "}", TOKEN_MAX) == 0){ return TOKEN_BRACE_CLOSE; }
-	if (strncmp(content, "(", TOKEN_MAX) == 0){ return TOKEN_PAREN_OPEN; }
-	if (strncmp(content, ")", TOKEN_MAX) == 0){ return TOKEN_PAREN_CLOSE; }
-	if (strncmp(content, "[", TOKEN_MAX) == 0){ return TOKEN_BRACK_OPEN; }
-	if (strncmp(content, "]", TOKEN_MAX) == 0){ return TOKEN_BRACK_CLOSE; }
-	if (strncmp(content, "\"", TOKEN_MAX) == 0){ return TOKEN_QUOTE; }
-	if (strncmp(content, "\\", TOKEN_MAX) == 0){ return TOKEN_ARG; }
-	if (strncmp(content, "'", TOKEN_MAX) == 0){ return TOKEN_TICK; }
-	if (strncmp(content, ";", TOKEN_MAX) == 0){ return TOKEN_SEMI; }
-	if (strncmp(content, ".", TOKEN_MAX) == 0){ return TOKEN_COMPOSE; }
-	if (strncmp(content, "$", TOKEN_MAX) == 0){ return TOKEN_PASS; }
-	if (strncmp(content, "#", TOKEN_MAX) == 0){ return TOKEN_ENCLOSE; }
-	if (strncmp(content, ",", TOKEN_MAX) == 0){ return TOKEN_COMMA; }
-	return type_index;
-}
-
-uint8_t lex_symbol(const char* const string){
-	for (const char* c = string; *c != '\0';++c){
-		if ((!issymbol(*c))
-		|| (*c == 40)
-		|| (*c == 41)
-		|| (*c == 91)
-		|| (*c == 93)
-		|| (*c == 123)
-		|| (*c == 125)
-		|| (*c == ';')){
-			return 1;
-		}
-	}
-	return 0;
-}
-
-uint32_t symbol_subtype(uint32_t type_index, char* const content){
-	if (strncmp(content, "+", TOKEN_MAX) == 0){ return TOKEN_ADD; }
-	if (strncmp(content, "-", TOKEN_MAX) == 0){ return TOKEN_SUB; }
-	if (strncmp(content, "*", TOKEN_MAX) == 0){ return TOKEN_MUL; }
-	if (strncmp(content, "/", TOKEN_MAX) == 0){ return TOKEN_DIV; }
-	if (strncmp(content, ".+", TOKEN_MAX) == 0){ return TOKEN_FLADD; }
-	if (strncmp(content, ".-", TOKEN_MAX) == 0){ return TOKEN_FLSUB; }
-	if (strncmp(content, ".*", TOKEN_MAX) == 0){ return TOKEN_FLMUL; }
-	if (strncmp(content, "./", TOKEN_MAX) == 0){ return TOKEN_FLDIV; }
-	if (strncmp(content, "%", TOKEN_MAX) == 0){ return TOKEN_MOD; }
-	if (strncmp(content, "<<", TOKEN_MAX) == 0){ return TOKEN_SHL; }
-	if (strncmp(content, ">>", TOKEN_MAX) == 0){ return TOKEN_SHR; }
-	if (strncmp(content, ".<", TOKEN_MAX) == 0){ return TOKEN_FLANGLE_OPEN; }
-	if (strncmp(content, ".>", TOKEN_MAX) == 0){ return TOKEN_FLANGLE_CLOSE; }
-	if (strncmp(content, ".<=", TOKEN_MAX) == 0){ return TOKEN_FLLESS_EQ; }
-	if (strncmp(content, ".>=", TOKEN_MAX) == 0){ return TOKEN_FLGREATER_EQ; }
-	if (strncmp(content, "=", TOKEN_MAX) == 0){ return TOKEN_SET; }
-	if (strncmp(content, ".==", TOKEN_MAX) == 0){ return TOKEN_FLEQ; }
-	if (strncmp(content, ".!=", TOKEN_MAX) == 0){ return TOKEN_FLNOT_EQ; }
-	if (strncmp(content, "&&", TOKEN_MAX) == 0){ return TOKEN_BOOL_AND; }
-	if (strncmp(content, "||", TOKEN_MAX) == 0){ return TOKEN_BOOL_OR; }
-	if (strncmp(content, "&", TOKEN_MAX) == 0){ return TOKEN_BIT_AND; }
-	if (strncmp(content, "|", TOKEN_MAX) == 0){ return TOKEN_BIT_OR; }
-	if (strncmp(content, "^", TOKEN_MAX) == 0){ return TOKEN_BIT_XOR; }
-	if (strncmp(content, "~", TOKEN_MAX) == 0){ return TOKEN_BIT_COMP; }
-	if (strncmp(content, "!", TOKEN_MAX) == 0){ return TOKEN_BOOL_NOT; }
-	if (strncmp(content, "->", TOKEN_MAX) == 0){ return TOKEN_FUNC_IMPL; }
-	if (strncmp(content, "<|", TOKEN_MAX) == 0){ return TOKEN_PIPE_LEFT; }
-	if (strncmp(content, "|>", TOKEN_MAX) == 0){ return TOKEN_PIPE_RIGHT; }
-	if (strncmp(content, "//", TOKEN_MAX) == 0){ return TOKEN_COMMENT; }
-	if (strncmp(content, "/*", TOKEN_MAX) == 0){ return TOKEN_MULTI_OPEN; }
-	if (strncmp(content, "*/", TOKEN_MAX) == 0){ return TOKEN_MULTI_CLOSE; }
-	return type_index;
-}
-
-uint8_t lex_integer(const char* const string){
-	for (const char* c = string; *c != '\0';++c){
-		if (!isdigit(*c)){
-			return 1;
-		}
-	}
-	return 0;
-}
-//TODO neither of these support negatives lol, also This is not the full IEEE 754
-uint8_t lex_float(const char* const string){
-	uint8_t dec = 0;
-	const char* c = string;
-	if (!isdigit(*c)){
-		return 1;
-	}
-	++c;
-	for (;*c != '\0';++c){
-		if (!isdigit(*c)){
-			if ((dec == 0) && (*c) == '.'){
-				dec = 1;
-				continue;
-			}
-			return 1;
-		}
-	}
-	return 0;
-}
-
-uint32_t no_subtype(uint32_t type_index, char* const content){
-	return type_index;
-}
-
-ast parse(FILE* fd, pool* const mem, char* err){
+ast parse(token* const tokens, pool* const mem, uint64_t token_count, char* err){
 	lexer lex = {
-		.fd=fd,
-		.line=1,
-		.col=0,
-		.index=0,
-		.working=0,
-		.tok=""
+		.tokens=tokens,
+		.token_count=token_count,
+		.index=0
 	};
 	token tok;
 	ast tree = {
@@ -398,17 +41,17 @@ ast parse(FILE* fd, pool* const mem, char* err){
 	};
 	// parse imports
 	tree.import_v = pool_request(mem, sizeof(token)*MAX_IMPORTS);
-	while (1){
-		tok = parse_token(&lex);
+	for (;lex.index < token_count;++lex.index){
+		tok = lex.tokens[lex.index];
 		if (tok.type != TOKEN_IMPORT){
 			break;
 		}
 		if (tree.import_c >= MAX_IMPORTS){
 			*err = 1;
-			return tree;
 			fprintf(stderr, "too many imports\n");
+			return tree;
 		}
-		if (parse_import(&tree, &lex, mem, err) != 0){
+		if (parse_import(&tree, &lex, mem, err)){
 			*err = 1;
 			return tree;
 		}
@@ -421,7 +64,7 @@ ast parse(FILE* fd, pool* const mem, char* err){
 	tree.new_type_v = pool_request(mem, sizeof(new_type_ast)*MAX_ALIASES);
 	tree.alias_v = pool_request(mem, sizeof(alias_ast)*MAX_ALIASES);
 	tree.const_v = pool_request(mem, sizeof(constant_ast)*MAX_ALIASES);
-	while (1){
+	for (;lex.index < token_count;tok=lex.tokens[++lex.index]){
 		if (tok.type == TOKEN_EOF){
 			return tree;
 		}
@@ -489,7 +132,7 @@ ast parse(FILE* fd, pool* const mem, char* err){
 			tree.const_c += 1;
 		}
 		else{
-			function_ast f = parse_function(&lex, mem, tok, err, 0);
+			function_ast f = parse_function(&lex, mem, err, 0);
 			if (*err != 0){
 				return tree;
 			}
@@ -509,22 +152,19 @@ ast parse(FILE* fd, pool* const mem, char* err){
 			}
 			tree.func_c += 1;
 		}
-		tok = parse_token(&lex);
 	}
-	*err = 1;
-	fprintf(stderr, "how did you get here?\n");
 	return tree;
 }
 
 uint8_t parse_import(ast* const tree, lexer* const lex, pool* const mem, char* err){
-	token filename = parse_token(lex);
+	token filename = lex->tokens[++lex->index];
 	if (filename.type != TOKEN_IDENTIFIER){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Tried to import non identifier: '%s'\n", lex->line, lex->col, filename.string);
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error : Tried to import non identifier: '%s'\n", filename.string);
 		return 1;
 	}
-	token semi = parse_token(lex);
+	token semi = lex->tokens[++lex->index];
 	if (semi.type != TOKEN_SEMI){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected ; after import %s, found '%s'\n", lex->line, lex->col, filename.string, semi.string);
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected ; after import %s, found '%s'\n", filename.string, semi.string);
 		return 1;
 	}
 	tree->import_v[tree->import_c] = filename;
@@ -541,25 +181,20 @@ structure_ast parse_struct(lexer* const lex, pool* const mem, char* err){
 		.binding_c=0,
 		.union_c=0
 	};
-	while (1){
-		token tok = parse_token(lex);
+	for (token tok = lex->tokens[++lex->index];
+		 lex->index<lex->token_count;
+		 tok=lex->tokens[++lex->index]
+	){
 		if (tok.type == TOKEN_BRACE_CLOSE){
 			return outer;
 		}
-		uint64_t save = ftell(lex->fd);
-		pool_save(mem);
-		lexer copy = *lex;
-		type_ast type = parse_type(lex, mem, err, tok, TOKEN_IDENTIFIER, 0);
+		uint64_t copy = parse_save(lex, mem);
+		type_ast type = parse_type(lex, mem, err, TOKEN_IDENTIFIER, 0);
 		if (*err != 0){
-			if (fseek(lex->fd, save, SEEK_SET) != 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack after parsing type for structure member\n", lex->line, lex->col);
-				return outer;
-			}
-			pool_load(mem);
+			parse_load(lex, mem, copy);
 			*err = 0;
-			*lex = copy;
 			if (tok.type != TOKEN_IDENTIFIER){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected identifier for enumerated union member or type for struct member, found '%s'\n", lex->line, lex->col, tok.string);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected identifier for enumerated union member or type for struct member, found '%s'\n", tok.string);
 				return outer;
 			}
 			if (outer.union_c == 0){
@@ -573,7 +208,7 @@ structure_ast parse_struct(lexer* const lex, pool* const mem, char* err){
 			}
 			outer.tag_v[outer.union_c] = tok;
 			outer.union_c += 1;
-			token open = parse_token(lex);
+			token open = lex->tokens[++lex->index];
 			switch(open.type){
 			case TOKEN_SEMI:
 				break;
@@ -583,35 +218,35 @@ structure_ast parse_struct(lexer* const lex, pool* const mem, char* err){
 					return outer;
 				}
 				outer.union_v[outer.union_c-1] = s;
-				token semi = parse_token(lex);
+				token semi = lex->tokens[++lex->index];
 				if (semi.type == TOKEN_SEMI){
 					break;
 				}
 				if (semi.type != TOKEN_SET){
-					snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected ';' to end union or '=' to set enumerated encoding, found '%s'\n", lex->line, lex->col, semi.string);
+					snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected ';' to end union or '=' to set enumerated encoding, found '%s'\n", semi.string);
 					return outer;
 				}
 			case TOKEN_SET:
-				token encoding = parse_token(lex);
+				token encoding = lex->tokens[++lex->index];
 				if (encoding.type != TOKEN_INTEGER){
-					snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected enumerator encoding, found '%s'\n", lex->line, lex->col, encoding.string);
+					snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected enumerator encoding, found '%s'\n", encoding.string);
 					return outer;
 				}
-				token true_semi = parse_token(lex);
+				token true_semi = lex->tokens[++lex->index];
 				if (true_semi.type == TOKEN_SEMI){
 					outer.encoding[outer.union_c-1] = atoi(encoding.string);
 					break;
 				}
 			default:
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected '{', for union data or '=' for enum encoding, found '%s'\n", lex->line, lex->col, open.string);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected '{', for union data or '=' for enum encoding, found '%s'\n", open.string);
 				return outer;
 			}
 		}
 		else{
-			tok = parse_token(lex);
-			token semi = parse_token(lex);
+			tok = lex->tokens[++lex->index];
+			token semi = lex->tokens[++lex->index];
 			if (tok.type != TOKEN_IDENTIFIER || semi.type != TOKEN_SEMI){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected 'identifier ;' for struct member name, found '%s' '%s'\n", lex->line, lex->col, tok.string, semi.string);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected 'identifier ;' for struct member name, found '%s' '%s'\n", tok.string, semi.string);
 				return outer;
 			}
 			binding_ast binding = {
@@ -622,11 +257,12 @@ structure_ast parse_struct(lexer* const lex, pool* const mem, char* err){
 			outer.binding_c += 1;
 		}
 	}
-	snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u How did you get here in struct parse\n", lex->line, lex->col);
+	snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : How did you get here in struct parse\n");
 	return outer;
 }
 
-type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TOKEN_TYPE_TAG end_token, uint8_t consume){
+type_ast parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t consume){
+	token name = lex->tokens[lex->index];
 	type_ast outer = (type_ast){
 		.tag=USER_TYPE,
 		.data.user=name,
@@ -634,8 +270,8 @@ type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TO
 	};
 	switch (name.type){
 	case TOKEN_BRACK_OPEN:
-		name = parse_token(lex);
-		outer = parse_type(lex, mem, err, name, TOKEN_BRACK_CLOSE, 1);
+		lex->index += 1;
+		outer = parse_type(lex, mem, err, TOKEN_BRACK_CLOSE, 1);
 		if (*err != 0){
 			return outer;
 		}
@@ -648,8 +284,8 @@ type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TO
 		}
 		break;
 	case TOKEN_PAREN_OPEN:
-		name = parse_token(lex);
-		outer = parse_type(lex, mem, err, name, TOKEN_PAREN_CLOSE, 1);
+		lex->index += 1;
+		outer = parse_type(lex, mem, err, TOKEN_PAREN_CLOSE, 1);
 		if (*err != 0){
 			return outer;
 		}
@@ -705,7 +341,8 @@ type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TO
 		break;
 	case TOKEN_PROC:
 		outer.tag=PROCEDURE_TYPE;
-		type_ast procedure_optional = parse_type(lex, mem, err, parse_token(lex), end_token, 0);
+		lex->index += 1;
+		type_ast procedure_optional = parse_type(lex, mem, err, end_token, 0);
 		if (*err != 0){
 			return outer;
 		}
@@ -714,38 +351,31 @@ type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TO
 		break;
 	default:
 		if (name.type!=TOKEN_IDENTIFIER){
-			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected type name, found non identifier '%s'\n", lex->line, lex->col, name.string);
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected type name, found non identifier '%s'\n", name.string);
 			return (type_ast){.tag=NONE_TYPE};
 		}
 		break;
 	}
-	while (1){
-		uint64_t save = ftell(lex->fd);
-		pool_save(mem);
-		lexer copy = *lex;
-		token tok = parse_token(lex);
+	while (lex->index < lex->token_count){
+		uint64_t copy = parse_save(lex, mem);
+		token tok = lex->tokens[++lex->index];
 		if (tok.type == end_token || (end_token == TOKEN_IDENTIFIER && tok.type == TOKEN_SYMBOL)){
 			if (consume == 0){
-				if (fseek(lex->fd, save, SEEK_SET) != 0){
-					snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack after parsing type\n", lex->line, lex->col);
-					return outer;
-				}
-				pool_load(mem);
-				*lex = copy;
+				parse_load(lex, mem, copy);
 			}
 			return outer;
 		}
 		switch(tok.type){
 		case TOKEN_MUTABLE:
 			if (outer.mut == 1){
-				snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u Type has two mutable tags\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parser Error at : Type has two mutable tags\n");
 				return outer;
 			}
 			outer.mut = 1;
 			break;
 		case TOKEN_IDENTIFIER:
 			if (end_token != TOKEN_BRACK_CLOSE){
-				snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u Type given buffer size when not buffer or pointer\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parser Error at : Type given buffer size when not buffer or pointer\n");
 				return outer;
 			}
 			type_ast idenbase = outer;
@@ -759,7 +389,7 @@ type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TO
 			break;
 		case TOKEN_INTEGER:
 			if (end_token != TOKEN_BRACK_CLOSE){
-				snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u Type given buffer size when not buffer or pointer\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parser Error at : Type given buffer size when not buffer or pointer\n");
 				return outer;
 			}
 			type_ast base = outer;
@@ -777,25 +407,26 @@ type_ast parse_type(lexer* const lex, pool* const mem, char* err, token name, TO
 			outer.data.function.right = pool_request(mem, sizeof(type_ast));
 			*outer.data.function.left = arg;
 			outer.mut = 0;
-			tok = parse_token(lex);
-			*outer.data.function.right = parse_type(lex, mem, err, tok, end_token, consume);
+			lex->index += 1;
+			*outer.data.function.right = parse_type(lex, mem, err, end_token, consume);
 			return outer;
 		default:
-			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unexpected token in or after type: '%s'\n", lex->line, lex->col, tok.string);
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Unexpected token in or after type: '%s'\n", tok.string);
 			return outer;
 		}
 	}
-	snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Reached end of file while parsing type\n", lex->line, lex->col);
+	snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Reached end of file while parsing type\n");
 	return (type_ast){.tag=NONE_TYPE};
 }
 
 new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err){
-	token name = parse_token(lex);
+	token name = lex->tokens[++lex->index];
 	if (name.type != TOKEN_IDENTIFIER){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected identifier for type new_type name, found '%s'\n", lex->line, lex->col, name.string);
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected identifier for type new_type name, found '%s'\n", name.string);
 		return (new_type_ast){};
 	}
-	type_ast type = parse_type(lex, mem, err, parse_token(lex), TOKEN_SEMI, 1);
+	lex->index += 1;
+	type_ast type = parse_type(lex, mem, err, TOKEN_SEMI, 1);
 	if (*err != 0){
 		return (new_type_ast){};
 	}
@@ -806,21 +437,21 @@ new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err){
 }
 
 constant_ast parse_constant(lexer* const lex, pool* const mem, char* err){
-	token name = parse_token(lex);
+	token name = lex->tokens[++lex->index];
 	constant_ast constant = {
 		.value.type.tag=PRIMITIVE_TYPE,
 		.value.type.data.primitive=INT_ANY
 	};
 	if (name.type != TOKEN_IDENTIFIER){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected name for constant identifier\n", lex->line, lex->col);
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected name for constant identifier\n");
 		return constant;
 	}
 	constant.name=name;
-	token eq = parse_token(lex);
+	token eq = lex->tokens[++lex->index];
 	if (eq.type != TOKEN_SET){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected token '=' to set constant value\n", lex->line, lex->col);
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected token '=' to set constant value\n");
 	}
-	token val = parse_token(lex);
+	token val = lex->tokens[++lex->index];
 	switch (val.type){
 	case TOKEN_FLOAT:
 		constant.value.type=(type_ast){
@@ -837,24 +468,25 @@ constant_ast parse_constant(lexer* const lex, pool* const mem, char* err){
 		constant.value.name=val;
 		break;
 	default:
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Constants can currently only evaluate to integers and floats, in the future this may just be turned into a compile time expression evaluation feature\n", lex->line, lex->col);
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Constants can currently only evaluate to integers and floats, in the future this may just be turned into a compile time expression evaluation feature\n");
 		return constant;
 	}
-	token semi = parse_token(lex);
+	token semi = lex->tokens[++lex->index];
 	if (semi.type != TOKEN_SEMI){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing ERror at %u:%u Constants definitions must end with token ';'\n", lex->line, lex->col);
+		snprintf(err, ERROR_BUFFER, " <!> Parsing ERror at : Constants definitions must end with token ';'\n");
 		return constant;
 	}
 	return constant;
 }
 
 alias_ast parse_alias(lexer* const lex, pool* const mem, char* err){
-	token name = parse_token(lex);
+	token name = lex->tokens[++lex->index];
 	if (name.type != TOKEN_IDENTIFIER){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected identifier for type new_type name, found '%s'\n", lex->line, lex->col, name.string);
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected identifier for type new_type name, found '%s'\n", name.string);
 		return (new_type_ast){};
 	}
-	type_ast type = parse_type(lex, mem, err, parse_token(lex), TOKEN_SEMI, 1);
+	lex->index += 1;
+	type_ast type = parse_type(lex, mem, err,  TOKEN_SEMI, 1);
 	if (*err != 0){
 		return (new_type_ast){};
 	}
@@ -864,28 +496,29 @@ alias_ast parse_alias(lexer* const lex, pool* const mem, char* err){
 	};
 }
 
-function_ast parse_function(lexer* const lex, pool* const mem, token tok, char* err, uint8_t allowed_enclosing){
-	type_ast type = parse_type(lex, mem, err, tok, TOKEN_IDENTIFIER, 0);
+function_ast parse_function(lexer* const lex, pool* const mem, char* err, uint8_t allowed_enclosing){
+	type_ast type = parse_type(lex, mem, err, TOKEN_IDENTIFIER, 0);
 	if (*err != 0){
 		return (function_ast){
 			.type=type
 		};
 	}
-	token name = parse_token(lex);
+	token name = lex->tokens[++lex->index];
 	if (name.type != TOKEN_IDENTIFIER && name.type != TOKEN_SYMBOL){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected function name, found '%s'\n", lex->line, lex->col, name.string);
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected function name, found '%s'\n", name.string);
 		return (function_ast){};
 	}
-	tok = parse_token(lex);
+	token tok = lex->tokens[++lex->index];
 	uint8_t enclosing = 0;
 	if (tok.type != TOKEN_SET){
 		if (allowed_enclosing != 1 || tok.type != TOKEN_ENCLOSE){
-			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected '=' to set function to value, found %s\n", lex->line, lex->col, tok.string);
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected '=' to set function to value, found %s\n", tok.string);
 			return (function_ast){};
 		}
 		enclosing = 1;
 	}
-	expression_ast expr = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_SEMI, 0, -1);
+	lex->index += 1;
+	expression_ast expr = parse_application_expression(lex, mem, err, TOKEN_SEMI, 0, -1);
 	if (expr.tag == APPLICATION_EXPRESSION && expr.data.block.expr_c == 1){
 		expr = expr.data.block.expr_v[0];
 	}
@@ -907,25 +540,23 @@ expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_
 			.type.tag=NONE_TYPE
 		}
 	};
-	token tok;
-	while (1){
-		tok = parse_token(lex);
+	for (token tok = lex->tokens[++lex->index];
+		 lex->index<lex->token_count;
+		 tok=lex->tokens[++lex->index]
+	){
 		expression_ast build;
-		uint64_t save;
-		lexer copy;
+		uint64_t copy;
 		switch (tok.type){
 		case TOKEN_IDENTIFIER:
 			outer.data.lambda.argv[outer.data.lambda.argc] = tok;
 			outer.data.lambda.argc += 1;
 			if (outer.data.lambda.argc >= MAX_ARGS){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Too many args for arena allocated buffer\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Too many args for arena allocated buffer\n");
 				return outer;
 			}
 			break;
 		case TOKEN_BRACK_OPEN:
-			copy = *lex;
-			save = ftell(lex->fd);
-			pool_save(mem);
+			copy = parse_save(lex, mem);
 			literal_ast lit = parse_array_literal(lex, mem, err);
 			if (*err == 0){
 				build.tag = LITERAL_EXPRESSION;
@@ -934,14 +565,10 @@ expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_
 				*outer.data.lambda.expression = build;
 				return outer;
 			}
-			if (fseek(lex->fd, save, SEEK_SET) != 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing dereference expression\n", lex->line, lex->col);
-				return outer;
-			}
-			pool_load(mem);
-			*lex = copy;
+			parse_load(lex, mem, copy);
 			*err = 0;
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACK_CLOSE, 1, -1);
+			lex->index += 1;
+			build = parse_application_expression(lex, mem, err, TOKEN_BRACK_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -954,9 +581,7 @@ expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_
 			*outer.data.lambda.expression = deref;
 			return outer;
 		case TOKEN_BRACE_OPEN:
-			copy = *lex;
-			save = ftell(lex->fd);
-			pool_save(mem);
+			copy = parse_save(lex, mem);
 			lit = parse_struct_literal(lex, mem, err);
 			if (*err == 0){
 				build.tag = LITERAL_EXPRESSION;
@@ -965,14 +590,10 @@ expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_
 				*outer.data.lambda.expression = build;
 				return outer;
 			}
-			if (fseek(lex->fd, save, SEEK_SET) != 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing dereference expression\n", lex->line, lex->col);
-				return outer;
-			}
-			pool_load(mem);
-			*lex = copy;
+			parse_load(lex, mem, copy);
 			*err = 0;
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACE_CLOSE, 1, -1);
+			lex->index += 1;
+			build = parse_application_expression(lex, mem, err, TOKEN_BRACE_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -985,7 +606,8 @@ expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_
 			*outer.data.lambda.expression = access;
 			return outer;
 		case TOKEN_PAREN_OPEN:
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_PAREN_CLOSE, 1, -1);
+			lex->index += 1;
+			build = parse_application_expression(lex, mem, err, TOKEN_PAREN_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -993,16 +615,16 @@ expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_
 			*outer.data.lambda.expression = build;
 			return outer;
 		default:
-			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unexpected token provided as function argument: '%s'\n", lex->line, lex->col, tok.string);
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Unexpected token provided as function argument: '%s'\n", tok.string);
 			return outer;
 		}
 	}
-	snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Reached unexpected case in lambda parsing\n", lex->line, lex->col);
+	snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Reached unexpected case in lambda parsing\n");
 	return outer;
 }
 
-function_ast try_function(lexer* const lex, pool* const mem, token expr, char* err){
-	uint32_t save;
+function_ast try_function(lexer* const lex, pool* const mem, char* err){
+	token expr = lex->tokens[lex->index];
 	function_ast func;
 	switch(expr.type){
 	case TOKEN_PROC:
@@ -1020,19 +642,12 @@ function_ast try_function(lexer* const lex, pool* const mem, token expr, char* e
 	case TOKEN_I64:
 	case TOKEN_F32:
 	case TOKEN_F64:
-		lexer copy = *lex;
-		save = ftell(lex->fd);
-		pool_save(mem);
-		func = parse_function(lex, mem, expr, err, 1);
+		uint64_t copy = parse_save(lex, mem);
+		func = parse_function(lex, mem, err, 1);
 		if (*err == 0){
 			return func;
 		}
-		if (fseek(lex->fd, save, SEEK_SET) != 0){
-			snprintf(err, ERROR_BUFFER, "<!> Parsing Error at %u:%u Unable to backtrack after closure parse attempt\n", lex->line, lex->col);
-			return func;
-		}
-		pool_load(mem);
-		*lex = copy;
+		parse_load(lex, mem, copy);
 		return func;
 	default:
 		break;
@@ -1063,15 +678,17 @@ expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* e
 	if (first.tag == RETURN_EXPRESSION){
 		return outer;
 	}
-	while(1){
+	for (token tok = lex->tokens[++lex->index];
+		 lex->index < lex->token_count;
+		 tok = lex->tokens[++lex->index]
+	){
 		expression_ast build = {
 			.tag=APPLICATION_EXPRESSION
 		};
-		token tok = parse_token(lex);
 		if (tok.type == end_token){
 			return outer;
 		}
-		build = parse_application_expression(lex, mem, tok, err, TOKEN_SEMI, 2, -1);
+		build = parse_application_expression(lex, mem, err, TOKEN_SEMI, 2, -1);
 		if (*err != 0){
 			return outer;
 		}
@@ -1079,11 +696,12 @@ expression_ast parse_block_expression(lexer* const lex, pool* const mem, char* e
 		outer.data.block.expr_v[outer.data.block.expr_c] = build;
 		outer.data.block.expr_c += 1;
 	}
-	snprintf(err, ERROR_BUFFER, " <!> Parser Error %u:%u how did you get to this condition in the block expression parser\n", lex->line, lex->col);
+	snprintf(err, ERROR_BUFFER, " <!> Parser Error : how did you get to this condition in the block expression parser\n");
 	return outer;
 }
 
-expression_ast parse_application_expression(lexer* const lex, pool* const mem, token expr, char* err, TOKEN_TYPE_TAG end_token, uint8_t allow_block, int8_t limit){
+expression_ast parse_application_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t allow_block, int8_t limit){
+	token expr = lex->tokens[lex->index];
 	expression_ast outer = {
 		.tag=APPLICATION_EXPRESSION,
 		.data.block.type={.tag=NONE_TYPE},
@@ -1091,7 +709,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 	};
 	outer.data.block.expr_v = pool_request(mem, MAX_ARGS*sizeof(expression_ast));
 	if (allow_block != 0){
-		function_ast func = try_function(lex, mem, expr, err);
+		function_ast func = try_function(lex, mem, err);
 		if (*err == 0){
 			outer.tag = CLOSURE_EXPRESSION;
 			outer.data.closure.capture_v = NULL;
@@ -1108,36 +726,29 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 	expression_ast pass_expression;
 	expression_ast* last_pass;
 	uint8_t pass = 0;
-	uint64_t limit_save;
-	lexer limit_copy;
+	uint64_t limit_copy;
 	if (limit != -1){
 		if (allow_block != 0){
-			snprintf(err, ERROR_BUFFER, " <!> Parsing Assertion error %u:%u blocks cannot be allowed when applications are limit requested\n", lex->line, lex->col);
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Assertion error : blocks cannot be allowed when applications are limit requested\n");
 			return outer;
 		}
-		limit_save = ftell(lex->fd);
-		pool_save(mem);
-		limit_copy = *lex;
-		expr = parse_token(lex);
+		limit_copy = parse_save(lex, mem);
+		expr = lex->tokens[++lex->index];
 	}
 	LABEL_REQUEST label_req = LABEL_FULFILLED;
 	LABEL_REQUEST jump_req = LABEL_FULFILLED;
-	while (1){
+	for (;lex->index < lex->token_count;expr=lex->tokens[++lex->index]){
 		expression_ast build = {
 			.tag=BINDING_EXPRESSION
 		};
 		literal_ast lit;
 		if (expr.type == end_token){
 			if (limit != -1){
-				if (fseek(lex->fd, limit_save, SEEK_SET) != 0){
-					snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing limited application expression\n", lex->line, lex->col);
-					return outer;
-				}
-				pool_load(mem);
-				*lex = limit_copy;
+				parse_load(lex, mem, limit_copy);
 			}
 			if (outer.data.block.expr_c == 0 && end_token == TOKEN_SEMI){
-				return parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block, -1);
+				lex->index += 1;
+				return parse_application_expression(lex, mem, err, end_token, allow_block, -1);
 			}
 			if (pass == 0){
 				return outer;
@@ -1147,12 +758,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			return pass_expression;
 		}
 		if (limit == 0 || (limit != -1 && expr.type == TOKEN_SEMI)){
-			if (fseek(lex->fd, limit_save, SEEK_SET) != 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing limited application expression\n", lex->line, lex->col);
-				return outer;
-			}
-			pool_load(mem);
-			*lex = limit_copy;
+			parse_load(lex, mem, limit_copy);
 			if (pass == 0){
 				return outer;
 			}
@@ -1161,17 +767,17 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			return pass_expression;
 		}
 		uint8_t simple = 0;
-		uint64_t save;
-		lexer copy;
+		uint64_t copy;
 		switch (expr.type){
 		case TOKEN_RETURN:
 			if (outer.data.block.expr_c != 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unexpected token 'return'\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Unexpected token 'return'\n");
 				return outer;
 			}
 			build.tag = RETURN_EXPRESSION;
 			build.data.deref = pool_request(mem, sizeof(expression_ast));
-			expression_ast retexpr = parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block, -1);
+			lex->index += 1;
+			expression_ast retexpr = parse_application_expression(lex, mem, err, end_token, allow_block, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1199,7 +805,8 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 		case TOKEN_REF:
 			build.tag = REF_EXPRESSION;
 			build.data.deref = pool_request(mem, sizeof(expression_ast));
-			*build.data.deref = parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block, -1);
+			lex->index += 1;
+			*build.data.deref = parse_application_expression(lex, mem, err, end_token, allow_block, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1213,25 +820,20 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			return pass_expression;
 		case TOKEN_SIZEOF:
 			build.tag = SIZEOF_EXPRESSION;
-			copy = *lex;
-			save = ftell(lex->fd);
-			pool_save(mem);
-			build.data.size_of.type = parse_type(lex, mem, err, parse_token(lex), end_token, 0);
+			copy = parse_save(lex, mem);
+			lex->index += 1;
+			build.data.size_of.type = parse_type(lex, mem, err, end_token, 0);
 			if (*err == 0){
 				build.data.size_of.target = NULL;
 				outer.data.block.expr_v[outer.data.block.expr_c] = build;
 				outer.data.block.expr_c += 1;
 				break;
 			}
-			if (fseek(lex->fd, save, SEEK_SET) != 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing sizeof expression intrinsic\n", lex->line, lex->col);
-				return outer;
-			}
-			pool_load(mem);
-			*lex = copy;
+			parse_load(lex, mem, copy);
 			*err = 0;
 			build.data.size_of.target = pool_request(mem, sizeof(expression_ast));
-			*build.data.size_of.target = parse_application_expression(lex, mem, parse_token(lex), err, end_token, allow_block, -1);
+			lex->index += 1;
+			*build.data.size_of.target = parse_application_expression(lex, mem, err, end_token, allow_block, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1245,16 +847,16 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			return pass_expression;
 		case TOKEN_SET:
 			if (outer.data.block.expr_c != 1){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Mutation with '=' requires 1 left operand, was operand number %u\n", lex->line, lex->col, outer.data.block.expr_c);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Mutation with '=' requires 1 left operand, was operand number %u\n", outer.data.block.expr_c);
 				return outer;
 			}
 			uint8_t tag = outer.data.block.expr_v[0].tag;
 			if (tag != DEREF_EXPRESSION && tag != BINDING_EXPRESSION && tag != ACCESS_EXPRESSION){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u First operand of mutation '=' must be either a dereference or a bound variable name\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : First operand of mutation '=' must be either a dereference or a bound variable name\n");
 				return outer;
 			}
 			if (pass != 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Errpr at %u:%u Mutation must be dominant expression\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Errpr at : Mutation must be dominant expression\n");
 				return outer;
 			}
 			build.tag=BINDING_EXPRESSION;
@@ -1326,14 +928,15 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			break;
 		case TOKEN_CAST:
 			if (outer.data.block.expr_c == 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Pointer cast requires left argument\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Pointer cast requires left argument\n");
 			}
-			token open_br = parse_token(lex);
+			token open_br = lex->tokens[++lex->index];
 			if (open_br.type != TOKEN_BRACK_OPEN){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Attempted to cast to non pointer type\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Attempted to cast to non pointer type\n");
 				return outer;
 			}
-			type_ast cast_target = parse_type(lex, mem, err, parse_token(lex), TOKEN_BRACK_CLOSE, 1);
+			lex->index += 1;
+			type_ast cast_target = parse_type(lex, mem, err, TOKEN_BRACK_CLOSE, 1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1394,9 +997,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_c += 1;
 			break;
 		case TOKEN_BRACK_OPEN:
-			copy = *lex;
-			save = ftell(lex->fd);
-			pool_save(mem);
+			copy = parse_save(lex, mem);
 			lit = parse_array_literal(lex, mem, err);
 			if (*err == 0){
 				build.tag = LITERAL_EXPRESSION;
@@ -1405,14 +1006,10 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 				outer.data.block.expr_c += 1;
 				break;
 			}
-			if (fseek(lex->fd, save, SEEK_SET) != 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing dereference expression\n", lex->line, lex->col);
-				return outer;
-			}
-			pool_load(mem);
-			*lex = copy;
+			parse_load(lex, mem, copy);
 			*err = 0;
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACK_CLOSE, 1, -1);
+			lex->index += 1;
+			build = parse_application_expression(lex, mem, err, TOKEN_BRACK_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1425,7 +1022,8 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_c += 1;
 			break;
 		case TOKEN_PAREN_OPEN:
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_PAREN_CLOSE, 1, -1);
+			lex->index += 1;
+			build = parse_application_expression(lex, mem, err, TOKEN_PAREN_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1433,9 +1031,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_c += 1;
 			break;
 		case TOKEN_BRACE_OPEN:
-			copy = *lex;
-			save = ftell(lex->fd);
-			pool_save(mem);
+			copy = parse_save(lex, mem);
 			lit = parse_struct_literal(lex, mem, err);
 			if (*err == 0){
 				build.tag = LITERAL_EXPRESSION;
@@ -1444,14 +1040,10 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 				outer.data.block.expr_c += 1;
 				break;
 			}
-			if (fseek(lex->fd, save, SEEK_SET) != 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing dereference expression\n", lex->line, lex->col);
-				return outer;
-			}
-			pool_load(mem);
-			*lex = copy;
+			parse_load(lex, mem, copy);
 			*err = 0;
-			build = parse_application_expression(lex, mem, parse_token(lex), err, TOKEN_BRACE_CLOSE, 1, -1);
+			lex->index += 1;
+			build = parse_application_expression(lex, mem, err, TOKEN_BRACE_CLOSE, 1, -1);
 			if (*err != 0){
 				return outer;
 			}
@@ -1463,7 +1055,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_v[outer.data.block.expr_c] = access;
 			outer.data.block.expr_c += 1;
 			break;
-		case TOKEN_TICK:
+		case TOKEN_CHAR:
 			binding_ast char_lit = parse_char_literal(lex, mem, err);
 			if (*err != 0){
 				return outer;
@@ -1473,7 +1065,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_v[outer.data.block.expr_c] = build;
 			outer.data.block.expr_c += 1;
 			break;
-		case TOKEN_QUOTE:
+		case TOKEN_STRING:
 			lit = parse_string_literal(lex, mem, err);
 			if (*err != 0){
 				return outer;
@@ -1484,12 +1076,12 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_c += 1;
 			break;
 		case TOKEN_IF:
-			build = parse_application_expression(lex, mem, expr, err, end_token, 0, 3);
+			build = parse_application_expression(lex, mem, err, end_token, 0, 3);
 			if (*err != 0){
 				return outer;
 			}
 			if (build.data.block.expr_c < 2){
-				snprintf(err, ERROR_BUFFER, " <!> Parser Error %u:%u Require at least one consequent for if special form\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parser Error : Require at least one consequent for if special form\n");
 				return outer;
 			}
 			statement_ast iff = {
@@ -1508,7 +1100,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			}
 			if (label_req == LABEL_WAITING){
 				if (outer.data.block.expr_c != 0 && outer.data.block.expr_v[outer.data.block.expr_c-1].tag != BINDING_EXPRESSION){
-					snprintf(err, ERROR_BUFFER, " <!> Parsing Error %u:%u no previous label but one was requested\n", lex->line, lex->col);
+					snprintf(err, ERROR_BUFFER, " <!> Parsing Error : no previous label but one was requested\n");
 					return outer;
 				}
 				label_req = LABEL_FULFILLED;
@@ -1522,12 +1114,12 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			outer.data.block.expr_c += 1;
 			break;
 		case TOKEN_FOR:
-			build = parse_application_expression(lex, mem, expr, err, end_token, 0, 4);
+			build = parse_application_expression(lex, mem, err, end_token, 0, 4);
 			if (*err != 0){
 				return outer;
 			}
 			if (build.data.block.expr_c < 4){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u 'for' special form required 4 positional arguments (start -> end -> inc -> procedure), %u provided\n", lex->line, lex->col, build.data.block.expr_c);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : 'for' special form required 4 positional arguments (start -> end -> inc -> procedure), %u provided\n", build.data.block.expr_c);
 				return outer;
 			}
 			statement_ast forr = {
@@ -1545,7 +1137,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			*forr.data.for_statement.procedure = build.data.block.expr_v[3];
 			if (label_req == LABEL_WAITING){
 				if (outer.data.block.expr_c != 0 && outer.data.block.expr_v[outer.data.block.expr_c-1].tag != BINDING_EXPRESSION){
-					snprintf(err, ERROR_BUFFER, " <!> Parsing Error %u:%u no previous label but one was requested\n", lex->line, lex->col);
+					snprintf(err, ERROR_BUFFER, " <!> Parsing Error : no previous label but one was requested\n");
 					return outer;
 				}
 				label_req = LABEL_FULFILLED;
@@ -1560,7 +1152,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			break;
 		case TOKEN_BREAK:
 			if (outer.data.block.expr_c != 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Jump directive 'continue' passed as argument\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Jump directive 'continue' passed as argument\n");
 				return outer;
 			}
 			statement_ast brk = {
@@ -1576,7 +1168,7 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			break;
 		case TOKEN_CONTINUE:
 			if (outer.data.block.expr_c != 0){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Jump directive 'continue' passed as argument\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Jump directive 'continue' passed as argument\n");
 				return outer;
 			}
 			statement_ast cnt = {
@@ -1592,12 +1184,12 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 			break;
 		case TOKEN_LABEL_JUMP:
 			if (jump_req != LABEL_WAITING){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u jump label must succeed jump directive statement\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : jump label must succeed jump directive statement\n");
 				return outer;
 			}
 			expression_ast* jump_directive = &outer.data.block.expr_v[outer.data.block.expr_c-1];
 			if (jump_directive->tag != STATEMENT_EXPRESSION){
-				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Jump directive was not statement?\n", lex->line, lex->col);
+				snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Jump directive was not statement?\n");
 				return outer;
 			}
 			binding_ast directive_binding = {
@@ -1624,30 +1216,28 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 		case TOKEN_BRACK_CLOSE:
 		case TOKEN_PAREN_CLOSE:
 		default:
-			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unexpected token '%s'\n", lex->line, lex->col, expr.string);
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Unexpected token '%s'\n", expr.string);
 			return outer;
 		}
 		if (limit != -1){
-			limit_save = ftell(lex->fd);
-			pool_save(mem);
-			limit_copy = *lex;
+			limit_copy = parse_save(lex, mem);
 			if (limit > 0){
 				limit -= 1;
 			}
 		}
 		if (label_req == LABEL_WAITING){
-			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u label must precede statement\n", lex->line, lex->col);
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : label must precede statement\n");
 			return outer;
 		}
 		if (jump_req == LABEL_WAITING){
-			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u jump label must succeed jump directive statement\n", lex->line, lex->col);
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : jump label must succeed jump directive statement\n");
 			return outer;
 		}
 		if (jump_req == LABEL_EXPIRED){
 			jump_req = LABEL_OVERDUE;
 		}
 		else if (jump_req == LABEL_OVERDUE){
-			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected end of jump directive statement\n", lex->line, lex->col);
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected end of jump directive statement\n");
 			return outer;
 		}
 		if (label_req == LABEL_REQUESTED){
@@ -1656,9 +1246,8 @@ expression_ast parse_application_expression(lexer* const lex, pool* const mem, t
 		if (jump_req == LABEL_REQUESTED){
 			jump_req = LABEL_WAITING;
 		}
-		expr = parse_token(lex);
 	}
-	snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u How did you get here in the application parser\n", lex->line, lex->col);
+	snprintf(err, ERROR_BUFFER, " <!> Parser Error at : How did you get here in the application parser\n");
 	return outer;
 }
 
@@ -1669,41 +1258,33 @@ literal_ast parse_struct_literal(lexer* const lex, pool* const mem, char* err){
 	};
 	lit.data.array.member_v = NULL;
 	lit.data.array.member_c = 0;
-	token tok = parse_token(lex);
+	token tok = lex->tokens[++lex->index];
 	if (tok.type == TOKEN_BRACE_CLOSE){
 		return lit;
 	}
 	lit.data.array.member_v = pool_request(mem, MAX_ARGS*sizeof(expression_ast));
-	expression_ast build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0, -1);
+	expression_ast build = parse_application_expression(lex, mem, err, TOKEN_COMMA, 0, -1);
 	if (*err != 0){
 		return lit;
 	}
 	lit.data.array.member_v[lit.data.array.member_c] = build;
 	lit.data.array.member_c += 1;
-	tok = parse_token(lex);
+	tok = lex->tokens[++lex->index];
 	if (tok.type == TOKEN_BRACE_CLOSE){
 		return lit;
 	}
 	while (1){
-		uint64_t save;
-		save = ftell(lex->fd);
-		pool_save(mem);
-		lexer copy = *lex;
-		expression_ast build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0, -1);
+		uint64_t copy = parse_save(lex, mem);
+		expression_ast build = parse_application_expression(lex, mem, err, TOKEN_COMMA, 0, -1);
 		if (*err == 0){
 			lit.data.array.member_v[lit.data.array.member_c] = build;
 			lit.data.array.member_c += 1;
-			tok = parse_token(lex);
+			tok = lex->tokens[++lex->index];
 			continue;
 		}
-		if (fseek(lex->fd, save, SEEK_SET) != 0){
-			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing struct literal\n", lex->line, lex->col);
-			return lit;
-		}
-		pool_load(mem);
-		*lex = copy;
+		parse_load(lex, mem, copy);
 		*err = 0;
-		build = parse_application_expression(lex, mem, tok, err, TOKEN_BRACE_CLOSE, 0, -1);
+		build = parse_application_expression(lex, mem, err, TOKEN_BRACE_CLOSE, 0, -1);
 		if (*err != 0){
 			return lit;
 		}
@@ -1711,6 +1292,16 @@ literal_ast parse_struct_literal(lexer* const lex, pool* const mem, char* err){
 		lit.data.array.member_c += 1;
 		return lit;
 	}
+}
+
+uint64_t parse_save(lexer* const lex, pool* const mem){
+	pool_save(mem);
+	return lex->index;
+}
+
+void parse_load(lexer* const lex, pool* const mem, uint64_t index){
+	pool_load(mem);
+	lex->index = index;
 }
 
 literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err){
@@ -1720,41 +1311,33 @@ literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err){
 	};
 	lit.data.array.member_v = NULL;
 	lit.data.array.member_c = 0;
-	token tok = parse_token(lex);
+	token tok = lex->tokens[++lex->index];
 	if (tok.type == TOKEN_BRACK_CLOSE){
 		return lit;
 	}
 	lit.data.array.member_v = pool_request(mem, MAX_ARGS*sizeof(expression_ast));
-	expression_ast build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0, -1);
+	expression_ast build = parse_application_expression(lex, mem, err, TOKEN_COMMA, 0, -1);
 	if (*err != 0){
 		return lit;
 	}
 	lit.data.array.member_v[lit.data.array.member_c] = build;
 	lit.data.array.member_c += 1;
-	tok = parse_token(lex);
+	tok = lex->tokens[++lex->index];
 	if (tok.type == TOKEN_BRACK_CLOSE){
 		return lit;
 	}
 	while (1){
-		uint64_t save;
-		save = ftell(lex->fd);
-		pool_save(mem);
-		lexer copy = *lex;
-		build = parse_application_expression(lex, mem, tok, err, TOKEN_COMMA, 0, -1);
+		uint64_t copy = parse_save(lex, mem);
+		build = parse_application_expression(lex, mem, err, TOKEN_COMMA, 0, -1);
 		if (*err == 0){
 			lit.data.array.member_v[lit.data.array.member_c] = build;
 			lit.data.array.member_c += 1;
-			tok = parse_token(lex);
+			tok = lex->tokens[++lex->index];
 			continue;
 		}
-		if (fseek(lex->fd, save, SEEK_SET) != 0){
-			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Unable to backtrack while parsing array literal\n", lex->line, lex->col);
-			return lit;
-		}
-		pool_load(mem);
-		*lex = copy;
+		parse_load(lex, mem, copy);
 		*err = 0;
-		build = parse_application_expression(lex, mem, tok, err, TOKEN_BRACK_CLOSE, 0, -1);
+		build = parse_application_expression(lex, mem, err, TOKEN_BRACK_CLOSE, 0, -1);
 		if (*err != 0){
 			return lit;
 		}
@@ -1762,18 +1345,14 @@ literal_ast parse_array_literal(lexer* const lex, pool* const mem, char* err){
 		lit.data.array.member_c += 1;
 		return lit;
 	}
-	snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u How did you get here in array literal parser\n", lex->line, lex->col);
+	snprintf(err, ERROR_BUFFER, " <!> Parser Error at : How did you get here in array literal parser\n");
 	return lit;
 }
 
 binding_ast parse_char_literal(lexer* const lex, pool* const mem, char* err){
-	//TODO excape sequences
-	token tok = parse_token(lex);
+	token tok = lex->tokens[lex->index];
 	binding_ast char_lit = {.type.tag=NONE_TYPE};
-	if (tok.len != 2){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected single character for character literal, found \"%s\"\n", lex->line, lex->col, tok.string);
-		return char_lit;
-	}
+	//TODO escape sequences
 	char target = tok.string[0];
 	snprintf(tok.string, 5, "%d", (int8_t)target);
 	tok.len = 3;
@@ -1781,11 +1360,6 @@ binding_ast parse_char_literal(lexer* const lex, pool* const mem, char* err){
 	char_lit.type.tag=PRIMITIVE_TYPE;
 	char_lit.type.data.primitive=I8_TYPE;
 	char_lit.name=tok;
-	tok = parse_token(lex);
-	if (tok.type != TOKEN_TICK){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at %u:%u Expected end of character literal token: (')\n", lex->line, lex->col);
-		return char_lit;
-	}
 	return char_lit;
 }
 
@@ -1794,12 +1368,9 @@ literal_ast parse_string_literal(lexer* const lex, pool* const mem, char* err){
 		.tag=STRING_LITERAL,
 		.type.tag=NONE_TYPE
 	};
-	lit.data.string.content = pool_byte(mem);
-	lit.data.string.length = 0;
-	lit.data.string.content[0] = '\0';
-	if (parse_crawl(lex, mem, lit.data.string.content, &lit.data.string.length) != 0){
-		snprintf(err, ERROR_BUFFER, " <!> Parser Error at %u:%u Unable to parse string literal\n", lex->line, lex->col);
-	}
+	token current = lex->tokens[lex->index];
+	lit.data.string.content = current.string;
+	lit.data.string.length = current.len;
 	return lit;
 }
 
@@ -1870,14 +1441,40 @@ uint8_t is_label_valid(scope* const s, binding_ast destination){
 	return 0;
 }
 
-void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* err){
+void transform_ast(ast* const tree, pool* const mem, char* err){
+	scope roll = {
+		.binding_stack = pool_request(mem, MAX_STACK_MEMBERS*sizeof(binding_ast)),
+		.frame_stack = pool_request(mem, MAX_STACK_MEMBERS*sizeof(uint16_t)),
+		.binding_count=0,
+		.binding_capacity=MAX_STACK_MEMBERS,
+		.frame_count=0,
+		.frame_capacity=MAX_STACK_MEMBERS,
+		.captures=pool_request(mem, sizeof(capture_stack)),
+		.capture_frame=0,
+		.label_stack = pool_request(mem, MAX_STACK_MEMBERS*sizeof(binding_ast)),
+		.label_count=0,
+		.label_capacity=MAX_STACK_MEMBERS,
+		.label_frame_stack = pool_request(mem, MAX_STACK_MEMBERS*sizeof(uint16_t)),
+		.label_scope_stack = pool_request(mem, MAX_STACK_MEMBERS*sizeof(uint16_t)),
+		.label_frame_count=0,
+		.label_frame_capacity=MAX_STACK_MEMBERS,
+		.label_scope_count=0
+	};
+	*roll.captures = (capture_stack){
+		.prev=NULL,
+		.next=NULL,
+		.size=0,
+		.binding_count_point=0
+	};
+	push_builtins(&roll, mem);
+	roll.builtin_stack_frame = roll.binding_count;
 	for (uint32_t i = 0;i<tree->func_c;++i){
 		function_ast* f = &tree->func_v[i];
-		roll_type(roll, tree, mem, &f->type, err);
+		roll_type(&roll, tree, mem, &f->type, err);
 		if (*err != 0){
 			return;
 		}
-		roll_expression(roll, tree, mem, &f->expression, f->type, 0, NULL, 1, err);
+		roll_expression(&roll, tree, mem, &f->expression, f->type, 0, NULL, 1, err);
 		if (*err != 0){
 			return;
 		}
@@ -1886,18 +1483,15 @@ void transform_ast(scope* const roll, ast* const tree, pool* const mem, char* er
 
 /* TODO LIST
 
+    0 procedures can just return, thats all, no other anything, just normal functions otherwise
 	1 module system
 	2 parametric types/ buffers/ pointers
 	3 memory optimizations                         < TODO current task
-		1 targetted hashmaps for parsing keywords
 		2 fix lost space in arena
 			1 separate buffers for different nodes
 			2 node size starts small and can resize, old can be reused for next node
 			3 resizing doesnt need a copy if last node in buffer
 		3 make structs smaller, just reorder for now
-		4 read from file at start, skipping system call on subsequent parse_token calls
-			1 will need to fix backtracking
-			2 can rewrite parser backtrack moments and statement parsing with new system
 	4 Finish semantic pass stuff
 		1 all the little todos
 		2 fix type equality
@@ -2134,6 +1728,7 @@ type_ast roll_expression(
 			focus_lambda->argc += num_caps;
 			function_ast lifted_closure = *expr->data.closure.func;
 			lifted_closure.type = captured_type;
+			lifted_closure.name.string = pool_request(mem, TOKEN_MAX);
 			snprintf(lifted_closure.name.string, TOKEN_MAX, ":CLOSURE_%u", tree->lifted_lambdas);
 			tree->lifted_lambdas += 1;
 			tree->func_v[tree->func_c] = lifted_closure;
@@ -2780,7 +2375,7 @@ void lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, 
 	save_lambda.data.lambda.argc += total_captures;
 	token new_token = {
 		.type=TOKEN_IDENTIFIER,
-		.string={0}
+		.string=pool_request(mem, TOKEN_MAX)
 	};
 	snprintf(new_token.string, TOKEN_MAX, ":LAMBDA_%u", tree->lifted_lambdas);
 	new_token.len=strlen(new_token.string);
@@ -3367,57 +2962,343 @@ type_ast roll_literal_expression(
 	return expected_type;
 }
 
-int compile_from_file(char* filename){
+void hash_keyword(TOKEN_TYPE_TAG_map* keywords, const char* key, TOKEN_TYPE_TAG value){
+	TOKEN_TYPE_TAG* persistent_value = pool_request(keywords->mem, sizeof(TOKEN_TYPE_TAG));
+	*persistent_value = value;
+	TOKEN_TYPE_TAG_map_insert(keywords, key, persistent_value);
+}
+
+void add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords){
+	hash_keyword(keywords, "if", TOKEN_IF);
+	hash_keyword(keywords, "else", TOKEN_ELSE);
+	hash_keyword(keywords, "for", TOKEN_FOR);
+	hash_keyword(keywords, "using", TOKEN_IMPORT);
+	hash_keyword(keywords, "match", TOKEN_MATCH);
+	hash_keyword(keywords, "return", TOKEN_RETURN);
+	hash_keyword(keywords, "u8", TOKEN_U8);
+	hash_keyword(keywords, "u16", TOKEN_U16);
+	hash_keyword(keywords, "u32", TOKEN_U32);
+	hash_keyword(keywords, "u64", TOKEN_U64);
+	hash_keyword(keywords, "i8", TOKEN_I8);
+	hash_keyword(keywords, "i16", TOKEN_I16);
+	hash_keyword(keywords, "i32", TOKEN_I32);
+	hash_keyword(keywords, "i64", TOKEN_I64);
+	hash_keyword(keywords, "f32", TOKEN_F32);
+	hash_keyword(keywords, "f64", TOKEN_F64);
+	hash_keyword(keywords, "type", TOKEN_TYPE);
+	hash_keyword(keywords, "alias", TOKEN_ALIAS);
+	hash_keyword(keywords, "var", TOKEN_MUTABLE);
+	hash_keyword(keywords, "ptr", TOKEN_REF);
+	hash_keyword(keywords, "procedure", TOKEN_PROC);
+	hash_keyword(keywords, "constant", TOKEN_CONST);
+	hash_keyword(keywords, "as", TOKEN_CAST);
+	hash_keyword(keywords, "sizeof", TOKEN_SIZEOF);
+	hash_keyword(keywords, "break", TOKEN_BREAK);
+	hash_keyword(keywords, "continue", TOKEN_CONTINUE);
+	hash_keyword(keywords, "+", TOKEN_ADD);
+	hash_keyword(keywords, "-", TOKEN_SUB);
+	hash_keyword(keywords, "*", TOKEN_MUL);
+	hash_keyword(keywords, "/", TOKEN_DIV);
+	hash_keyword(keywords, ".+", TOKEN_FLADD);
+	hash_keyword(keywords, ".-", TOKEN_FLSUB);
+	hash_keyword(keywords, ".*", TOKEN_FLMUL);
+	hash_keyword(keywords, "./", TOKEN_FLDIV);
+	hash_keyword(keywords, "%", TOKEN_MOD);
+	hash_keyword(keywords, "<<", TOKEN_SHL);
+	hash_keyword(keywords, ">>", TOKEN_SHR);
+	hash_keyword(keywords, ".<", TOKEN_FLANGLE_OPEN);
+	hash_keyword(keywords, ".>", TOKEN_FLANGLE_CLOSE);
+	hash_keyword(keywords, ".<=", TOKEN_FLLESS_EQ);
+	hash_keyword(keywords, ".>=", TOKEN_FLGREATER_EQ);
+	hash_keyword(keywords, "=", TOKEN_SET);
+	hash_keyword(keywords, ".==", TOKEN_FLEQ);
+	hash_keyword(keywords, ".!=", TOKEN_FLNOT_EQ);
+	hash_keyword(keywords, "&&", TOKEN_BOOL_AND);
+	hash_keyword(keywords, "||", TOKEN_BOOL_OR);
+	hash_keyword(keywords, "&", TOKEN_BIT_AND);
+	hash_keyword(keywords, "|", TOKEN_BIT_OR);
+	hash_keyword(keywords, "^", TOKEN_BIT_XOR);
+	hash_keyword(keywords, "~", TOKEN_BIT_COMP);
+	hash_keyword(keywords, "!", TOKEN_BOOL_NOT);
+	hash_keyword(keywords, "->", TOKEN_FUNC_IMPL);
+	hash_keyword(keywords, "<|", TOKEN_PIPE_LEFT);
+	hash_keyword(keywords, "|>", TOKEN_PIPE_RIGHT);
+	hash_keyword(keywords, "//", TOKEN_COMMENT);
+	hash_keyword(keywords, "/*", TOKEN_MULTI_OPEN);
+	hash_keyword(keywords, "*/", TOKEN_MULTI_CLOSE);
+}
+
+token* lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_t* token_count, char* err){
+	TOKEN_TYPE_TAG_map keywords = TOKEN_TYPE_TAG_map_init(mem);
+	add_keyword_hashes(&keywords);
+	*token_count = 0;
+	uint64_t token_capacity = sizeof(token)*READ_TOKEN_CHUNK;
+	char* string_content = pool_request(mem, STRING_CONTENT_BUFFER);
+	token* tokens = pool_request(mem, token_capacity);
+	token tok = {
+		.line=1,
+		.col=0,
+		.len=0,
+		.string=string_content,
+	};
+	uint64_t i = 0;
+	for (char c = buffer[i];i<size_bytes;c = buffer[++i]){
+		printf("%s ", tok.string);
+		string_content += tok.len+1;
+		tok.string = string_content;
+		tok.len = 0;
+		if (*token_count == token_capacity){
+			token_capacity += sizeof(token)*READ_TOKEN_CHUNK;
+			pool_request(mem, sizeof(token)*READ_TOKEN_CHUNK);
+		}
+		switch (c){
+		case '\n':
+		case ' ':
+		case '\t':
+		case '\r':
+			continue;
+		default:
+		}
+		if (isdigit(c)){
+			uint8_t dec = 0;
+			tok.type = TOKEN_INTEGER;
+			for (char k = c;i<size_bytes;k = buffer[++i]){
+				if (!isdigit(k)){
+					if (k == '.' && dec == 0){
+						dec = 1;
+						tok.type = TOKEN_FLOAT;
+					}
+					else{
+						break;
+					}
+				}
+				tok.string[tok.len] = k;
+				tok.len += 1;
+			}
+			i -= 1;
+			tok.string[tok.len] = '\0';
+			tokens[*token_count] = tok;
+			*token_count += 1;
+			continue;
+		}
+		else if (isalnum(c) || c == '_'){
+			uint32_t identifier_hash = 5381;
+			tok.string[tok.len] = c;
+			tok.len += 1;
+			tok.type = TOKEN_IDENTIFIER;
+			identifier_hash = ((identifier_hash<<5)+identifier_hash)+((int16_t)c);
+			for (char k = buffer[++i];i<size_bytes;k = buffer[++i]){
+				if (!isalnum(k) && k != '_'){
+					if (k == ':'){
+						tok.string[tok.len] = k;
+						tok.len += 1;
+						tok.type = TOKEN_LABEL;
+						i += 1;
+					}
+					break;
+				}
+				tok.string[tok.len] = k;
+				tok.len += 1;
+				identifier_hash = ((identifier_hash<<5)+identifier_hash)+((int16_t)k);
+			}
+			i -= 1;
+			tok.string[tok.len] = '\0';
+			TOKEN_TYPE_TAG* iskeyword = TOKEN_TYPE_TAG_map_access_by_hash(&keywords, identifier_hash, tok.string);
+			if (iskeyword != NULL){
+				tok.type = *iskeyword;
+			}
+			tokens[*token_count] = tok;
+			*token_count += 1;
+			continue;
+		}
+		tok.type = TOKEN_SYMBOL;
+		uint8_t settled = 1;
+		switch (c){
+		case '{': tok.type = TOKEN_BRACE_OPEN; break;
+		case '}': tok.type = TOKEN_BRACE_CLOSE; break;
+		case '[': tok.type = TOKEN_BRACK_OPEN; break;
+		case ']': tok.type = TOKEN_BRACK_CLOSE; break;
+		case '(': tok.type = TOKEN_PAREN_OPEN; break;
+		case ')': tok.type = TOKEN_PAREN_CLOSE; break;
+		case '\\': tok.type = TOKEN_ARG; break;
+		case ';': tok.type = TOKEN_SEMI; break;
+		case '.': tok.type = TOKEN_COMPOSE; break;
+		case '$': tok.type = TOKEN_PASS; break;
+		case '#': tok.type = TOKEN_ENCLOSE; break;
+		case ',': tok.type = TOKEN_COMMA; break;
+		case '\'': 
+			tok.type = TOKEN_CHAR;
+			char char_item = buffer[++i];
+			if (i >= size_bytes){
+				snprintf(err, ERROR_BUFFER, "Lexing Error, unexpected end of file\n");
+				return tokens;
+			}
+			if (char_item == '\\'){
+				char_item = buffer[++i];
+				if (i >= size_bytes){
+					snprintf(err, ERROR_BUFFER, "Lexing Error, unexpected end of file\n");
+					return tokens;
+				}
+				tok.string[tok.len] = char_item;
+				tok.len += 1;
+			}
+			tok.string[tok.len] = char_item;
+			tok.len += 1;
+			char_item = buffer[++i];
+			if (char_item != '\'' || i >= size_bytes){
+				snprintf(err, ERROR_BUFFER, " Lexing error, expected (') to end character literal\n");
+				return tokens;
+			}
+			tok.string[tok.len] = '\0';
+			tokens[*token_count] = tok;
+			*token_count += 1;
+			continue;
+		case '"':
+			tok.type = TOKEN_STRING;
+			for (char k = buffer[++i];i<size_bytes;k = buffer[++i]){
+				if (k == '"'){
+					break;
+				}
+				tok.string[tok.len] = k;
+				tok.len += 1;
+			}
+			if (i == size_bytes){
+				snprintf(err, ERROR_BUFFER, " Lexing Error, ended file while parsing string literal, expected '\"'\n");
+				return tokens;
+			}
+			tok.string[tok.len] = '\0';
+			tokens[*token_count] = tok;
+			*token_count += 1;
+			continue;
+		case ':':
+			tok.string[tok.len] = c;
+			tok.len += 1;
+			c = buffer[++i];
+			if (isdigit(c)){
+				tok.type = TOKEN_SYMBOL;
+				break;
+			}
+			tok.type = TOKEN_LABEL_JUMP;
+			for (char k = c;i < size_bytes;k = buffer[++i]){
+				if ((!isalnum(k)) && (k != '_')){
+					break;
+				}
+				tok.string[tok.len] = k;
+				tok.len += 1;
+			}
+			i -= 1;
+			tok.string[tok.len] = '\0';
+			tokens[*token_count] = tok;
+			*token_count += 1;
+			continue;
+		default:
+			settled = 0;
+			break;
+		}
+		if (settled == 1){
+			tok.string[tok.len] = c;
+			tok.len += 1;
+			tok.string[tok.len] = '\0';
+			tokens[*token_count] = tok;
+			*token_count += 1;
+			continue;
+		}
+		else if (issymbol(c)){
+			uint32_t symbol_hash = 5381;
+			char k = c;
+			for (;i<size_bytes;k=buffer[++i]){
+				if ((!issymbol(k))
+				|| (k == '(')
+				|| (k == ')')
+				|| (k == '[')
+				|| (k == ']')
+				|| (k == '{')
+				|| (k == '}')
+				|| (k == ';')){
+					break;
+				}
+				tok.string[tok.len] = k;
+				tok.len += 1;
+				symbol_hash = ((symbol_hash<<5)+symbol_hash)+((int16_t)k);
+			}
+			tok.string[tok.len] = '\0';
+			TOKEN_TYPE_TAG* iskeyword = TOKEN_TYPE_TAG_map_access_by_hash(&keywords, symbol_hash, tok.string);
+			if (iskeyword != NULL){
+				tok.type = *iskeyword;
+			}
+			if (tok.type == TOKEN_COMMENT){
+				for (;i<size_bytes&&k != '\n';k=buffer[++i]){}
+				i -= 1;
+				continue;
+			}
+			if (tok.type == TOKEN_MULTI_OPEN){
+				while (buffer[i++] != '*'
+				    && i < size_bytes
+					&& buffer[i] != '/'
+				){}
+				continue;
+			}
+			i -= 1;
+			tokens[*token_count] = tok;
+			*token_count += 1;
+			continue;
+		}
+		if (c == EOF){
+			tok.type = TOKEN_EOF;
+			tokens[*token_count] = tok;
+			*token_count += 1;
+			break;
+		}
+	}
+	return tokens;
+}
+
+int compile_file(char* filename){
 	FILE* fd = fopen(filename, "r");
 	if (fd == NULL){
-		fprintf(stderr, "File not found: %s\n", filename);
+		fprintf(stderr, "File not found '%s'\n", filename);
 		return 1;
 	}
+	pool read_buffer = pool_alloc(READ_BUFFER_SIZE, POOL_STATIC);
+	uint64_t read_bytes = fread(read_buffer.buffer, sizeof(char), READ_BUFFER_SIZE, fd);
+	fclose(fd);
+	if (read_bytes == READ_BUFFER_SIZE){
+		pool_dealloc(&read_buffer);
+		fprintf(stderr, "file larger than allowed read buffer\n");
+		return 1;
+	}
+	int comp = compile_cstr(&read_buffer, read_bytes);
+	return comp;
+}
+
+int compile_cstr(pool* const read_buffer, uint64_t read_bytes){
 	pool mem = pool_alloc(POOL_SIZE, POOL_STATIC);
-	printf("%lu bytes left\n", mem.left);
 	char err[ERROR_BUFFER] = "\0";
-	ast tree = parse(fd, &mem, err);
-	if (err[0] != '\0'){
-		fprintf(stderr, "Could not compile from source file: %s\n", filename);
+	uint64_t token_count = 0;
+	printf("%lu bytes left\n", mem.left);
+	token* tokens = lex_cstr(read_buffer->buffer, read_bytes, &mem, &token_count, err);
+	printf("\nLexed\n");
+	printf("%lu bytes left\n", mem.left);
+	pool_dealloc(read_buffer);
+	if (*err != 0){
+		fprintf(stderr, "Could not compile");
 		fprintf(stderr, err);
-		show_ast(&tree);
-		fclose(fd);
+		pool_dealloc(&mem);
+		return 1;
+	}
+	ast tree = parse(tokens, &mem, token_count, err);
+	if (err[0] != '\0'){
+		fprintf(stderr, "Could not compile");
+		fprintf(stderr, err);
 		pool_dealloc(&mem);
 		return 1;
 	}
 	show_ast(&tree);
 	printf("Parsed\n");
 	printf("%lu bytes left\n", mem.left);
-	fclose(fd);
-	scope roll = {
-		.binding_stack = pool_request(&mem, MAX_STACK_MEMBERS*sizeof(binding_ast)),
-		.frame_stack = pool_request(&mem, MAX_STACK_MEMBERS*sizeof(uint16_t)),
-		.binding_count=0,
-		.binding_capacity=MAX_STACK_MEMBERS,
-		.frame_count=0,
-		.frame_capacity=MAX_STACK_MEMBERS,
-		.captures=pool_request(&mem, sizeof(capture_stack)),
-		.capture_frame=0,
-		.label_stack = pool_request(&mem, MAX_STACK_MEMBERS*sizeof(binding_ast)),
-		.label_count=0,
-		.label_capacity=MAX_STACK_MEMBERS,
-		.label_frame_stack = pool_request(&mem, MAX_STACK_MEMBERS*sizeof(uint16_t)),
-		.label_scope_stack = pool_request(&mem, MAX_STACK_MEMBERS*sizeof(uint16_t)),
-		.label_frame_count=0,
-		.label_frame_capacity=MAX_STACK_MEMBERS,
-		.label_scope_count=0
-	};
-	*roll.captures = (capture_stack){
-		.prev=NULL,
-		.next=NULL,
-		.size=0,
-		.binding_count_point=0
-	};
-	push_builtins(&roll, &mem);
-	roll.builtin_stack_frame = roll.binding_count;
-	transform_ast(&roll, &tree, &mem, err);
+	transform_ast(&tree, &mem, err);
 	if (*err != 0){
-		fprintf(stderr, "Could not compile from source file: %s\n", filename);
+		fprintf(stderr, "Could not compile");
 		fprintf(stderr, err);
 		show_ast(&tree);
 		pool_dealloc(&mem);
@@ -3544,7 +3425,6 @@ void show_token(const token* const tok){
 }
 
 void show_ast(const ast* const tree){
-	return;
 	for (size_t i = 0;i<tree->import_c;++i){
 		printf("\033[1;34mimport\033[0m ");
 		show_token(&tree->import_v[i]);
@@ -3886,7 +3766,7 @@ void show_function(const function_ast* const func){
 }
 
 int main(int argc, char** argv){
-	compile_from_file("correct.ka");
+	compile_file("correct.ka");
 	return 0;
 	if (argc < 2){
 		fprintf(stderr, "No arguments provided, use -h or -help for a list of options\n\n");
