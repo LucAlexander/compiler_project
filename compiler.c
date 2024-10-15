@@ -3036,14 +3036,11 @@ token* lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, 
 	char* string_content = pool_request(mem, STRING_CONTENT_BUFFER);
 	token* tokens = pool_request(mem, token_capacity);
 	token tok = {
-		.line=1,
-		.col=0,
 		.len=0,
-		.string=string_content,
+		.string=string_content
 	};
 	uint64_t i = 0;
 	for (char c = buffer[i];i<size_bytes;c = buffer[++i]){
-		printf("%s ", tok.string);
 		string_content += tok.len+1;
 		tok.string = string_content;
 		tok.len = 0;
@@ -3425,6 +3422,7 @@ void show_token(const token* const tok){
 }
 
 void show_ast(const ast* const tree){
+	return;
 	for (size_t i = 0;i<tree->import_c;++i){
 		printf("\033[1;34mimport\033[0m ");
 		show_token(&tree->import_v[i]);

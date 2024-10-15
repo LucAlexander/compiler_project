@@ -8,8 +8,8 @@
 
 #define READ_BUFFER_SIZE 0x1000000
 #define READ_TOKEN_CHUNK 0x1000
-#define STRING_CONTENT_BUFFER 0x1000000
-#define POOL_SIZE 0x2000000
+#define STRING_CONTENT_BUFFER 0x100000
+#define POOL_SIZE 0x1000000
 #define MAX_FUNCTIONS 10000
 #define MAX_ALIASES    1000
 #define MAX_IMPORTS     100
@@ -118,11 +118,9 @@ typedef enum TOKEN_TYPES {
 MAP_DEF(TOKEN_TYPE_TAG)
 
 typedef struct token {
-	uint32_t line;
-	uint32_t col;
-	uint32_t len;
 	char* string;
 	TOKEN_TYPE_TAG type;
+	uint32_t len;
 } token;
 
 void show_token(const token* const tok);
