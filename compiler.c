@@ -1541,6 +1541,16 @@ transform_ast(ast* const tree, pool* const mem, char* err){
 	};
 	push_builtins(&roll, mem);
 	roll.builtin_stack_frame = roll.binding_count;
+	for (uint32_t i = 0;i<tree->new_type_c;++i){
+		new_type_ast* t = &tree->new_type_v[i];
+		if (t->type.tag != STRUCT_TYPE){
+			continue;
+		}
+		roll_data_layout(tree, t->type.data.structure, t->name, err);
+		if (*err != 0){
+			return;
+		}
+	}
 	for (uint32_t i = 0;i<tree->func_c;++i){
 		function_ast* f = &tree->func_v[i];
 		roll_type(&roll, tree, mem, &f->type, err);
@@ -1548,6 +1558,47 @@ transform_ast(ast* const tree, pool* const mem, char* err){
 			return;
 		}
 		roll_expression(&roll, tree, mem, &f->expression, f->type, 0, NULL, 1, err);
+		if (*err != 0){
+			return;
+		}
+	}
+}
+
+void
+roll_data_layout(ast* const tree, structure_ast* target, token name, char* err){
+	//TODO this traversal probably has a faster memoized traversal
+	for (uint32_t i = 0;i<target->binding_c;++i){
+		type_ast inner = target->binding_v[i].type;
+		if (inner.tag != STRUCT_TYPE){
+			if (inner.tag != USER_TYPE){
+				continue;
+			}
+			while (inner.tag == USER_TYPE){
+				if (strncmp(name.string, inner.data.user.string, TOKEN_MAX) == 0){
+					snprintf(err, ERROR_BUFFER, " Struct nesting error\n");
+					return;
+				}
+				new_type_ast* primitive_new_type = new_type_ast_map_access(&tree->types, inner.data.user.string);
+				if (primitive_new_type != NULL){
+					inner = primitive_new_type->type;
+					continue;
+				}
+				inner = resolve_alias(tree, inner, err);
+				if (*err != 0){
+					return;
+				}
+			}
+			if (inner.tag != STRUCT_TYPE){
+				continue;
+			}
+		}
+		roll_data_layout(tree, inner.data.structure, name, err);
+		if (*err != 0){
+			return;
+		}
+	}
+	for (uint32_t i = 0;i<target->union_c;++i){
+		roll_data_layout(tree, &target->union_v[i], name, err);
 		if (*err != 0){
 			return;
 		}
@@ -1563,7 +1614,7 @@ transform_ast(ast* const tree, pool* const mem, char* err){
 	3 Finish semantic pass stuff
 		1 all the little todos
 		2 fix type equality
-		3 struct size determinaiton
+		3 struct size determination
 	4 IR
 		1 group function application into distinct calls for defined top level functions
 		2 create structures for partial application cases
@@ -1574,7 +1625,7 @@ transform_ast(ast* const tree, pool* const mem, char* err){
 	8 code generation
 		1 C proof of concept understanding
 		2 maybe a native x86 or arm or risc-V
-		3 custom vm for game OS
+		3 custom vm for game OS (hla doc)
 	9 Good error system
 	10 round off parser, floats, ints, chars
 	11 memory optimizations

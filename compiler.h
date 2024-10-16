@@ -469,6 +469,7 @@ void push_label_scope(scope* const s);
 void pop_label_scope(scope* const s);
 
 void transform_ast(ast* const tree, pool* const mem, char* err);
+void roll_data_layout(ast* const tree, structure_ast* const target, token name, char* err);
 void roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err);
 void roll_struct_type(scope* const roll, ast* const tree, pool* const mem, structure_ast* const target, char* err);
 type_ast roll_expression(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, type_ast expected_type, uint32_t argc, expression_ast* const argv, uint8_t prevent_lift, char* err);
