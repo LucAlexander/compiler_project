@@ -22,13 +22,12 @@ issymbol(char c){
 }
 
 ast
-parse(token* const tokens, pool* const mem, uint64_t token_count, char* err){
+parse(token* const tokens, pool* const mem, uint64_t token_count, char* string_content_buffer, char* err){
 	lexer lex = {
 		.tokens=tokens,
 		.token_count=token_count,
 		.index=0
 	};
-	token tok;
 	ast tree = {
 		.import_c = 0,
 		.func_c = 0,
@@ -39,139 +38,182 @@ parse(token* const tokens, pool* const mem, uint64_t token_count, char* err){
 		.types = new_type_ast_map_init(mem),
 		.aliases = alias_ast_map_init(mem),
 		.constants = constant_ast_map_init(mem),
-		.lifted_lambdas=0
+		.lifted_lambdas=0,
+		.string_buffer=string_content_buffer
 	};
-	// parse imports
 	tree.import_v = pool_request(mem, sizeof(token)*MAX_IMPORTS);
-	for (;lex.index < token_count;++lex.index){
-		tok = lex.tokens[lex.index];
-		if (tok.type != TOKEN_IMPORT){
-			break;
-		}
-		if (tree.import_c >= MAX_IMPORTS){
-			*err = 1;
-			fprintf(stderr, "too many imports\n");
-			return tree;
-		}
-		if (parse_import(&tree, &lex, mem, err)){
-			*err = 1;
-			return tree;
-		}
-	}
-	if (tok.type == TOKEN_EOF){
-		return tree;
-	}
-	// parse actual code
-	tree.func_v = pool_request(mem, sizeof(function_ast)*MAX_FUNCTIONS) - (sizeof(token)*(MAX_IMPORTS - tree.import_c));
+	tree.func_v = pool_request(mem, sizeof(function_ast)*MAX_FUNCTIONS);
 	tree.new_type_v = pool_request(mem, sizeof(new_type_ast)*MAX_ALIASES);
 	tree.alias_v = pool_request(mem, sizeof(alias_ast)*MAX_ALIASES);
 	tree.const_v = pool_request(mem, sizeof(constant_ast)*MAX_ALIASES);
-	for (;lex.index < token_count;tok=lex.tokens[++lex.index]){
-		if (tok.type == TOKEN_EOF){
-			return tree;
-		}
-		if (tok.type == TOKEN_TYPE){
-			new_type_ast a = parse_new_type(&lex, mem, err);
-			if (*err != 0){
-				return tree;
-			}
-			tree.new_type_v[tree.new_type_c] = a;
-			uint8_t collision = new_type_ast_map_insert(&tree.types, tree.new_type_v[tree.new_type_c].name.string, &tree.new_type_v[tree.new_type_c]);
-			if (collision == 1){
-				snprintf(err, ERROR_BUFFER, " <!> Type '%s' defined multiple times\n", tree.new_type_v[tree.new_type_c].name.string);
-			}
-			else if (function_ast_map_access(&tree.functions, tree.new_type_v[tree.new_type_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Type '%s' defined prior as function\n", tree.new_type_v[tree.new_type_c].name.string);
-			}
-			else if (alias_ast_map_access(&tree.aliases, tree.new_type_v[tree.new_type_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Type '%s' defined prior as alias\n", tree.new_type_v[tree.new_type_c].name.string);
-			}
-			else if (constant_ast_map_access(&tree.constants, tree.new_type_v[tree.new_type_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Type '%s' defined prior as constant\n", tree.new_type_v[tree.new_type_c].name.string);
-			}
-			tree.new_type_c += 1;
-		}
-		else if (tok.type == TOKEN_ALIAS){
-			alias_ast a = parse_alias(&lex, mem, err);
-			if (*err != 0){
-				return tree;
-			}
-			tree.alias_v[tree.alias_c] = a;
-			uint8_t collision = alias_ast_map_insert(&tree.aliases, tree.alias_v[tree.alias_c].name.string, &tree.alias_v[tree.alias_c]);
-			if (collision == 1){
-				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined multiple times\n", tree.alias_v[tree.alias_c].name.string);
-			}
-			else if (function_ast_map_access(&tree.functions, tree.alias_v[tree.alias_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined prior as function\n", tree.alias_v[tree.alias_c].name.string);
-			}
-			else if (new_type_ast_map_access(&tree.types, tree.alias_v[tree.alias_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined prior as type\n", tree.alias_v[tree.alias_c].name.string);
-			}
-			else if (constant_ast_map_access(&tree.constants, tree.alias_v[tree.alias_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined prior as constant\n", tree.alias_v[tree.alias_c].name.string);
-			}
-			tree.alias_c += 1;
-		}
-		else if (tok.type == TOKEN_CONST){
-			constant_ast cnst = parse_constant(&lex, mem, err);
-			if (*err != 0){
-				return tree;
-			}
-			tree.const_v[tree.const_c] = cnst;
-			uint8_t collision = constant_ast_map_insert(&tree.constants, tree.const_v[tree.const_c].name.string, &tree.const_v[tree.const_c]);
-			if (collision == 1){
-				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' was defined multiple times\n", tree.const_v[tree.const_c].name.string);
-			}
-			else if (function_ast_map_access(&tree.functions, tree.const_v[tree.const_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' defined prior as function\n", tree.const_v[tree.const_c].name.string);
-			}
-			else if (new_type_ast_map_access(&tree.types, tree.const_v[tree.const_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' defined prior as type\n", tree.const_v[tree.const_c].name.string);
-			}
-			else if (alias_ast_map_access(&tree.aliases, tree.const_v[tree.const_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' defined prior as alias\n", tree.const_v[tree.const_c].name.string);
-			}
-			tree.const_c += 1;
-		}
-		else{
-			function_ast f = parse_function(&lex, mem, err, 0);
-			if (*err != 0){
-				return tree;
-			}
-			tree.func_v[tree.func_c] = f;
-			uint8_t collision = function_ast_map_insert(&tree.functions, tree.func_v[tree.func_c].name.string, &tree.func_v[tree.func_c]);
-			if (collision == 1){
-				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined multiple times\n", tree.func_v[tree.func_c].name.string);
-			}
-			else if (new_type_ast_map_access(&tree.types, tree.func_v[tree.func_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined prior as type\n", tree.func_v[tree.func_c].name.string);
-			}
-			else if (alias_ast_map_access(&tree.aliases, tree.func_v[tree.func_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined prior as alias\n", tree.func_v[tree.func_c].name.string);
-			}
-			else if (constant_ast_map_access(&tree.constants, tree.func_v[tree.func_c].name.string) != NULL){
-				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined prior as constant\n", tree.func_v[tree.func_c].name.string);
-			}
-			tree.func_c += 1;
-		}
-	}
+	add_to_tree(&tree, &lex, mem, err);
 	return tree;
 }
 
-uint8_t
+void
+add_to_tree(ast* const tree, lexer* const lex, pool* const mem, char* err){
+	token tok;
+	// parse imports
+	for (;lex->index < lex->token_count;++lex->index){
+		tok = lex->tokens[lex->index];
+		if (tok.type != TOKEN_IMPORT){
+			break;
+		}
+		if (tree->import_c >= MAX_IMPORTS){
+			snprintf(err, ERROR_BUFFER, "too many imports\n");
+			return;
+		}
+		parse_import(tree, lex, mem, err);
+		if (*err != 0){
+			return;
+		}
+	}
+	if (tok.type == TOKEN_EOF){
+		return;
+	}
+	// parse actual code
+	for (;lex->index < lex->token_count;tok=lex->tokens[++lex->index]){
+		if (tok.type == TOKEN_EOF){
+			return;
+		}
+		if (tok.type == TOKEN_TYPE){
+			new_type_ast a = parse_new_type(lex, mem, err);
+			if (*err != 0){
+				return;
+			}
+			tree->new_type_v[tree->new_type_c] = a;
+			uint8_t collision = new_type_ast_map_insert(&tree->types, tree->new_type_v[tree->new_type_c].name.string, &tree->new_type_v[tree->new_type_c]);
+			if (collision == 1){
+				snprintf(err, ERROR_BUFFER, " <!> Type '%s' defined multiple times\n", tree->new_type_v[tree->new_type_c].name.string);
+			}
+			else if (function_ast_map_access(&tree->functions, tree->new_type_v[tree->new_type_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Type '%s' defined prior as function\n", tree->new_type_v[tree->new_type_c].name.string);
+			}
+			else if (alias_ast_map_access(&tree->aliases, tree->new_type_v[tree->new_type_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Type '%s' defined prior as alias\n", tree->new_type_v[tree->new_type_c].name.string);
+			}
+			else if (constant_ast_map_access(&tree->constants, tree->new_type_v[tree->new_type_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Type '%s' defined prior as constant\n", tree->new_type_v[tree->new_type_c].name.string);
+			}
+			tree->new_type_c += 1;
+		}
+		else if (tok.type == TOKEN_ALIAS){
+			alias_ast a = parse_alias(lex, mem, err);
+			if (*err != 0){
+				return;
+			}
+			tree->alias_v[tree->alias_c] = a;
+			uint8_t collision = alias_ast_map_insert(&tree->aliases, tree->alias_v[tree->alias_c].name.string, &tree->alias_v[tree->alias_c]);
+			if (collision == 1){
+				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined multiple times\n", tree->alias_v[tree->alias_c].name.string);
+			}
+			else if (function_ast_map_access(&tree->functions, tree->alias_v[tree->alias_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined prior as function\n", tree->alias_v[tree->alias_c].name.string);
+			}
+			else if (new_type_ast_map_access(&tree->types, tree->alias_v[tree->alias_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined prior as type\n", tree->alias_v[tree->alias_c].name.string);
+			}
+			else if (constant_ast_map_access(&tree->constants, tree->alias_v[tree->alias_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Alias '%s' defined prior as constant\n", tree->alias_v[tree->alias_c].name.string);
+			}
+			tree->alias_c += 1;
+		}
+		else if (tok.type == TOKEN_CONST){
+			constant_ast cnst = parse_constant(lex, mem, err);
+			if (*err != 0){
+				return;
+			}
+			tree->const_v[tree->const_c] = cnst;
+			uint8_t collision = constant_ast_map_insert(&tree->constants, tree->const_v[tree->const_c].name.string, &tree->const_v[tree->const_c]);
+			if (collision == 1){
+				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' was defined multiple times\n", tree->const_v[tree->const_c].name.string);
+			}
+			else if (function_ast_map_access(&tree->functions, tree->const_v[tree->const_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' defined prior as function\n", tree->const_v[tree->const_c].name.string);
+			}
+			else if (new_type_ast_map_access(&tree->types, tree->const_v[tree->const_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' defined prior as type\n", tree->const_v[tree->const_c].name.string);
+			}
+			else if (alias_ast_map_access(&tree->aliases, tree->const_v[tree->const_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Constant '%s' defined prior as alias\n", tree->const_v[tree->const_c].name.string);
+			}
+			tree->const_c += 1;
+		}
+		else{
+			function_ast f = parse_function(lex, mem, err, 0);
+			if (*err != 0){
+				return;
+			}
+			tree->func_v[tree->func_c] = f;
+			uint8_t collision = function_ast_map_insert(&tree->functions, tree->func_v[tree->func_c].name.string, &tree->func_v[tree->func_c]);
+			if (collision == 1){
+				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined multiple times\n", tree->func_v[tree->func_c].name.string);
+			}
+			else if (new_type_ast_map_access(&tree->types, tree->func_v[tree->func_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined prior as type\n", tree->func_v[tree->func_c].name.string);
+			}
+			else if (alias_ast_map_access(&tree->aliases, tree->func_v[tree->func_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined prior as alias\n", tree->func_v[tree->func_c].name.string);
+			}
+			else if (constant_ast_map_access(&tree->constants, tree->func_v[tree->func_c].name.string) != NULL){
+				snprintf(err, ERROR_BUFFER, " <!> Function '%s' defined prior as constant\n", tree->func_v[tree->func_c].name.string);
+			}
+			tree->func_c += 1;
+		}
+	}
+}
+
+void
 parse_import(ast* const tree, lexer* const lex, pool* const mem, char* err){
 	token filename = lex->tokens[++lex->index];
 	if (filename.type != TOKEN_IDENTIFIER){
 		snprintf(err, ERROR_BUFFER, " <!> Parsing Error : Tried to import non identifier: '%s'\n", filename.string);
-		return 1;
+		return;
 	}
 	token semi = lex->tokens[++lex->index];
 	if (semi.type != TOKEN_SEMI){
 		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected ; after import %s, found '%s'\n", filename.string, semi.string);
-		return 1;
+		return;
+	}
+	if (already_imported(tree, filename) == 1){
+		return;
 	}
 	tree->import_v[tree->import_c] = filename;
 	tree->import_c += 1;
+	char file_cstr[TOKEN_MAX+3];
+	strncpy(file_cstr, filename.string, filename.len);
+	strcat(file_cstr, ".ka");
+	FILE* fd = fopen(file_cstr, "r");
+	if (fd == NULL){
+		snprintf(err, ERROR_BUFFER, "Could not find module with name '%s'\n", file_cstr);
+		return;
+	}
+	uint64_t read_bytes = fread(mem->buffer, sizeof(char), READ_BUFFER_SIZE, fd);
+	fclose(fd);
+	if (read_bytes == READ_BUFFER_SIZE){
+		snprintf(err, ERROR_BUFFER, "file larger than allowed read buffer\n");
+		return;
+	}
+	uint64_t token_count = 0;
+	token* tokens = lex_cstr(mem->buffer, read_bytes, mem, &token_count, &tree->string_buffer, err);
+	if (*err != 0){
+		return;
+	}
+	lexer nested_lex = {
+		.tokens=tokens,
+		.token_count = token_count,
+		.index=0
+	};
+	add_to_tree(tree, &nested_lex, mem, err);
+}
+
+uint8_t
+already_imported(ast* const tree, token filename){
+	for (uint32_t i = 0;i<tree->import_c;++i){
+		if (strncmp(tree->import_v[i].string, filename.string, TOKEN_MAX) == 0){
+			return 1;
+		}
+	}
 	return 0;
 }
 
@@ -1515,31 +1557,31 @@ transform_ast(ast* const tree, pool* const mem, char* err){
 /*
  * TODO LIST
 
- 
- 0 procedures can just return, thats all, no other anything, just normal functions otherwise
-	1 module system
+ 	1 procedures can just return, thats all, no other anything, just normal functions otherwise
+		procedures dont capture at all, can be invoked with function arguments
 	2 parametric types/ buffers/ pointers
-	3 memory optimizations                         < TODO current task
-		2 fix lost space in arena
-			1 separate buffers for different nodes
-			2 node size starts small and can resize, old can be reused for next node
-			3 resizing doesnt need a copy if last node in buffer
-		3 make structs smaller, just reorder for now
-	4 Finish semantic pass stuff
+	3 Finish semantic pass stuff
 		1 all the little todos
 		2 fix type equality
-	5 IR
+		3 struct size determinaiton
+	4 IR
 		1 group function application into distinct calls for defined top level functions
 		2 create structures for partial application cases
-	6 determine what code will be used and what code will not be used
+	5 determine what code will be used and what code will not be used
 		1 monomorphization of parametric types/functions that take them
-	7 matches on enumerated struct union, maybe with @ / enum access with tag?
-	8 struct ordering
-	9 code generation
+	6 matches on enumerated struct union, maybe with @ / enum access with tag?
+	7 struct ordering
+	8 code generation
 		1 C proof of concept understanding
 		2 maybe a native x86 or arm or risc-V
 		3 custom vm for game OS
-	10 Good error system
+	9 Good error system
+	10 round off parser, floats, ints, chars
+	11 memory optimizations
+		1 separate buffers for different nodes
+		2 node size starts small and can resize, old can be reused for next node
+		3 resizing doesnt need a copy if last node in buffer
+		4 relative pointers
 
 */
 
@@ -3085,21 +3127,20 @@ add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords){
 }
 
 token*
-lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_t* token_count, char* err){
+lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_t* token_count, char** string_content, char* err){
 	TOKEN_TYPE_TAG_map keywords = TOKEN_TYPE_TAG_map_init(mem);
 	add_keyword_hashes(&keywords);
 	*token_count = 0;
 	uint64_t token_capacity = sizeof(token)*READ_TOKEN_CHUNK;
-	char* string_content = pool_request(mem, STRING_CONTENT_BUFFER);
 	token* tokens = pool_request(mem, token_capacity);
 	token tok = {
 		.len=0,
-		.string=string_content
+		.string=*string_content
 	};
 	uint64_t i = 0;
 	for (char c = buffer[i];i<size_bytes;c = buffer[++i]){
-		string_content += tok.len+1;
-		tok.string = string_content;
+		*string_content += tok.len+1;
+		tok.string = *string_content;
 		tok.len = 0;
 		if (*token_count == token_capacity){
 			token_capacity += sizeof(token)*READ_TOKEN_CHUNK;
@@ -3314,7 +3355,8 @@ compile_file(char* filename){
 		fprintf(stderr, "File not found '%s'\n", filename);
 		return 1;
 	}
-	pool read_buffer = pool_alloc(READ_BUFFER_SIZE, POOL_STATIC);
+	pool read_buffer = pool_alloc(STRING_CONTENT_BUFFER+READ_BUFFER_SIZE+POOL_SIZE, POOL_STATIC);
+	pool_request(&read_buffer, READ_BUFFER_SIZE);
 	uint64_t read_bytes = fread(read_buffer.buffer, sizeof(char), READ_BUFFER_SIZE, fd);
 	fclose(fd);
 	if (read_bytes == READ_BUFFER_SIZE){
@@ -3327,43 +3369,42 @@ compile_file(char* filename){
 }
 
 int
-compile_cstr(pool* const read_buffer, uint64_t read_bytes){
-	pool mem = pool_alloc(POOL_SIZE, POOL_STATIC);
+compile_cstr(pool* const mem, uint64_t read_bytes){
 	char err[ERROR_BUFFER] = "\0";
 	uint64_t token_count = 0;
-	printf("%lu bytes left\n", mem.left);
-	token* tokens = lex_cstr(read_buffer->buffer, read_bytes, &mem, &token_count, err);
+	printf("%lu bytes left\n", mem->left);
+	char* string_content_buffer = pool_request(mem, STRING_CONTENT_BUFFER);
+	token* tokens = lex_cstr(mem->buffer, read_bytes, mem, &token_count, &string_content_buffer, err);
 	printf("Lexed\n");
-	printf("%lu bytes left\n", mem.left);
-	pool_dealloc(read_buffer);
+	printf("%lu bytes left\n", mem->left);
 	if (*err != 0){
-		fprintf(stderr, "Could not compile");
+		fprintf(stderr, "Could not compile\n");
 		fprintf(stderr, err);
-		pool_dealloc(&mem);
+		pool_dealloc(mem);
 		return 1;
 	}
-	ast tree = parse(tokens, &mem, token_count, err);
+	ast tree = parse(tokens, mem, token_count, string_content_buffer, err);
 	if (err[0] != '\0'){
-		fprintf(stderr, "Could not compile");
+		fprintf(stderr, "Could not compile\n");
 		fprintf(stderr, err);
-		pool_dealloc(&mem);
+		pool_dealloc(mem);
 		return 1;
 	}
 	show_ast(&tree);
 	printf("Parsed\n");
-	printf("%lu bytes left\n", mem.left);
-	transform_ast(&tree, &mem, err);
+	printf("%lu bytes left\n", mem->left);
+	transform_ast(&tree, mem, err);
 	if (*err != 0){
-		fprintf(stderr, "Could not compile");
+		fprintf(stderr, "Could not compile\n");
 		fprintf(stderr, err);
 		show_ast(&tree);
-		pool_dealloc(&mem);
+		pool_dealloc(mem);
 		return 1;
 	}
 	show_ast(&tree);
 	printf("Compiled\n");
-	printf("%lu bytes left\n", mem.left);
-	pool_dealloc(&mem);
+	printf("%lu bytes left\n", mem->left);
+	pool_dealloc(mem);
 	return 0;
 }
 

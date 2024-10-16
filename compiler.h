@@ -1,15 +1,15 @@
-#ifndef PARSER_H
-#define PARSER_H
+#ifndef COMPILER_H
+#define COMPILER_H
 
 #define TOKEN_MAX 64
 #include <inttypes.h>
 
 #include "hashmap.h"
 
-#define READ_BUFFER_SIZE 0x1000000
-#define READ_TOKEN_CHUNK 0x1000
-#define STRING_CONTENT_BUFFER 0x100000
-#define POOL_SIZE 0x1000000
+#define READ_BUFFER_SIZE      0x1000000
+#define STRING_CONTENT_BUFFER  0x100000
+#define POOL_SIZE             0x1000000
+#define READ_TOKEN_CHUNK         0x1000
 #define MAX_FUNCTIONS 10000
 #define MAX_ALIASES    1000
 #define MAX_IMPORTS     100
@@ -137,7 +137,7 @@ void parse_load(lexer* const lex, pool* const mem, uint64_t index);
 void hash_keyword(TOKEN_TYPE_TAG_map* keywords, const char* key, TOKEN_TYPE_TAG value);
 void add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords);
 
-token* lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_t* token_count, char* err);
+token* lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_t* token_count, char** string_buffer, char* err);
 int compile_file(char* filename);
 int compile_cstr(pool* const read_buffer, uint64_t read_bytes);
 
@@ -394,12 +394,15 @@ typedef struct ast{
 	uint32_t alias_c;
 	uint32_t const_c;
 	uint32_t lifted_lambdas;
+	char* string_buffer;
 } ast;
 
 void show_ast(const ast* const tree);
 
-ast parse(token* const tokens, pool* const mem, uint64_t token_count, char* err);
-uint8_t parse_import(ast* const tree, lexer* const lex, pool* const mem, char* err);
+ast parse(token* const tokens, pool* const mem, uint64_t token_count, char* string_content_buffer, char* err);
+void add_to_tree(ast* const tree, lexer* const lex, pool* const mem, char* err);
+void parse_import(ast* const tree, lexer* const lex, pool* const mem, char* err);
+uint8_t already_imported(ast* const tree, token filename);
 type_ast parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t consume);
 new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err);
 alias_ast parse_alias(lexer* const lex, pool* const mem, char* err);
