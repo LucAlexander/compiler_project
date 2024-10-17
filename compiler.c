@@ -522,7 +522,7 @@ parse_constant(lexer* const lex, pool* const mem, char* err){
 	}
 	token semi = lex->tokens[++lex->index];
 	if (semi.type != TOKEN_SEMI){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing ERror at : Constants definitions must end with token ';'\n");
+		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Constants definitions must end with token ';'\n");
 		return constant;
 	}
 	return constant;
@@ -1608,26 +1608,26 @@ roll_data_layout(ast* const tree, structure_ast* target, token name, char* err){
 /*
  * TODO LIST
 
- 	1 procedures can just return, thats all, no other anything, just normal functions otherwise
+	1 round off parser, floats, ints, chars              < TODO current task
+ 	2 procedures can just return, thats all, no other anything, just normal functions otherwise
 		procedures dont capture at all, can be invoked with function arguments
-	2 parametric types/ buffers/ pointers
-	3 Finish semantic pass stuff
+	3 parametric types/ buffers/ pointers
+		1 monomorphization of parametric types/functions that take them
+	4 Finish semantic pass stuff
 		1 all the little todos
 		2 fix type equality
 		3 struct size determination
-	4 IR
+	5 struct ordering
+	6 determine what code will be used and what code will not be used
+	7 matches on enumerated struct union, maybe with @ / enum access with tag?
+	8 IR
 		1 group function application into distinct calls for defined top level functions
 		2 create structures for partial application cases
-	5 determine what code will be used and what code will not be used
-		1 monomorphization of parametric types/functions that take them
-	6 matches on enumerated struct union, maybe with @ / enum access with tag?
-	7 struct ordering
-	8 code generation
+	9 code generation
 		1 C proof of concept understanding
 		2 maybe a native x86 or arm or risc-V
 		3 custom vm for game OS (hla doc)
-	9 Good error system
-	10 round off parser, floats, ints, chars
+	10 Good error system
 	11 memory optimizations
 		1 separate buffers for different nodes
 		2 node size starts small and can resize, old can be reused for next node
@@ -3177,6 +3177,26 @@ add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords){
 	hash_keyword(keywords, "*/", TOKEN_MULTI_CLOSE);
 }
 
+uint64_t
+lex_numeric(token* const tok, uint64_t i, const char* const buffer, uint64_t size_bytes){
+	uint8_t dec = 0;
+	tok->type = TOKEN_INTEGER;
+	for (char k = buffer[i];i<size_bytes;k = buffer[++i]){
+		if (!isdigit(k)){
+			if (k == '.' && dec == 0){
+				dec = 1;
+				tok->type = TOKEN_FLOAT;
+			}
+			else{
+				return i;
+			}
+		}
+		tok->string[tok->len] = k;
+		tok->len += 1;
+	}
+	return i;
+}
+
 token*
 lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_t* token_count, char** string_content, char* err){
 	TOKEN_TYPE_TAG_map keywords = TOKEN_TYPE_TAG_map_init(mem);
@@ -3205,22 +3225,21 @@ lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_
 			continue;
 		default:
 		}
-		if (isdigit(c)){
-			uint8_t dec = 0;
-			tok.type = TOKEN_INTEGER;
-			for (char k = c;i<size_bytes;k = buffer[++i]){
-				if (!isdigit(k)){
-					if (k == '.' && dec == 0){
-						dec = 1;
-						tok.type = TOKEN_FLOAT;
-					}
-					else{
-						break;
-					}
-				}
-				tok.string[tok.len] = k;
+		if (c=='-'){
+			if (i+1<size_bytes && isdigit(buffer[i+1])){
+				tok.string[tok.len] = c;
 				tok.len += 1;
+				i += 1;
+				i = lex_numeric(&tok, i, buffer, size_bytes);
+				i -= 1;
+				tok.string[tok.len] = '\0';
+				tokens[*token_count] = tok;
+				*token_count += 1;
+				continue;
 			}
+		}
+		if (isdigit(c)){
+			i = lex_numeric(&tok, i, buffer, size_bytes);
 			i -= 1;
 			tok.string[tok.len] = '\0';
 			tokens[*token_count] = tok;
@@ -3579,7 +3598,6 @@ show_token(const token* const tok){
 
 void
 show_ast(const ast* const tree){
-	return;
 	for (size_t i = 0;i<tree->import_c;++i){
 		printf("\033[1;34mimport\033[0m ");
 		show_token(&tree->import_v[i]);
