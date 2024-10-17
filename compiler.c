@@ -3179,20 +3179,72 @@ add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords){
 
 uint64_t
 lex_numeric(token* const tok, uint64_t i, const char* const buffer, uint64_t size_bytes){
-	uint8_t dec = 0;
+	//TODO hex 0x...
+	//TODO octal 0o...
+	//TODO binary 0b...
+	tok->string[tok->len] = buffer[i];
+	tok->len += 1;
 	tok->type = TOKEN_INTEGER;
-	for (char k = buffer[i];i<size_bytes;k = buffer[++i]){
-		if (!isdigit(k)){
-			if (k == '.' && dec == 0){
-				dec = 1;
-				tok->type = TOKEN_FLOAT;
-			}
-			else{
-				return i;
-			}
-		}
+	char k = buffer[++i];
+	if (i >= size_bytes){
+		return i;
+	}
+	switch(k){
+	case 'O':
+	case 'o':
 		tok->string[tok->len] = k;
 		tok->len += 1;
+		for (k=buffer[++i];i<size_bytes;k = buffer[++i]){
+			if (k < '0' || k > '7'){
+				return i;
+			}
+			tok->string[tok->len] = k;
+			tok->len += 1;
+		}
+		return i;
+	case 'X':
+	case 'x':
+		tok->string[tok->len] = k;
+		tok->len += 1;
+		for (k=buffer[++i];i<size_bytes;k = buffer[++i]){
+			if ((k >= '0' && k <= '9')
+			 || (k >= 'A' && k <= 'F')
+			 || (k >= 'a' && k <= 'f')){
+				tok->string[tok->len] = k;
+				tok->len += 1;
+				continue;
+			}
+			return i;
+		}
+		return i;
+	case 'B':
+	case 'b':
+		tok->string[tok->len] = k;
+		tok->len += 1;
+		for (k=buffer[++i];i<size_bytes;k = buffer[++i]){
+			if (k != '0' && k != '1'){
+				return i;
+			}
+			tok->string[tok->len] = k;
+			tok->len += 1;
+		}
+		return i;
+	default:
+		uint8_t dec = 0;
+		for (;i<size_bytes;k = buffer[++i]){
+			if (!isdigit(k)){
+				if (k == '.' && dec == 0){
+					dec = 1;
+					tok->type = TOKEN_FLOAT;
+				}
+				else{
+					return i;
+				}
+			}
+			tok->string[tok->len] = k;
+			tok->len += 1;
+		}
+		return i;
 	}
 	return i;
 }
