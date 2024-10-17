@@ -3225,6 +3225,28 @@ lex_numeric(token* const tok, uint64_t i, const char* const buffer, uint64_t siz
 			tok->len += 1;
 		}
 		return i;
+	case 'e':
+	case 'E':
+		tok->type = TOKEN_FLOAT;
+		tok->string[tok->len] = k;
+		tok->len += 1;
+		k = buffer[++i];
+		if (i >= size_bytes){
+			return i;
+		}
+		if (k == '-'){
+			tok->string[tok->len] = k;
+			tok->len += 1;
+			k = buffer[++i];
+		}
+		for (;i<size_bytes;k=buffer[++i]){
+			if (!isdigit(k)){
+				return i;
+			}
+			tok->string[tok->len] = k;
+			tok->len += 1;
+		}
+		return i;
 	default:
 		uint8_t dec = 0;
 		for (;i<size_bytes;k = buffer[++i]){
@@ -3232,10 +3254,33 @@ lex_numeric(token* const tok, uint64_t i, const char* const buffer, uint64_t siz
 				if (k == '.' && dec == 0){
 					dec = 1;
 					tok->type = TOKEN_FLOAT;
+					tok->string[tok->len] = k;
+					tok->len += 1;
+					continue;
 				}
-				else{
+				if (k == 'E' || k == 'e'){
+					tok->type = TOKEN_FLOAT;
+					tok->string[tok->len] = k;
+					tok->len += 1;
+					k = buffer[++i];
+					if (i >= size_bytes){
+						return i;
+					}
+					if (k == '-'){
+						tok->string[tok->len] = k;
+						tok->len += 1;
+						k = buffer[++i];
+					}
+					for (;i<size_bytes;k=buffer[++i]){
+						if (!isdigit(k)){
+							return i;
+						}
+						tok->string[tok->len] = k;
+						tok->len += 1;
+					}
 					return i;
 				}
+				return i;
 			}
 			tok->string[tok->len] = k;
 			tok->len += 1;
