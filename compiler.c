@@ -1413,7 +1413,6 @@ binding_ast
 parse_char_literal(lexer* const lex, pool* const mem, char* err){
 	token tok = lex->tokens[lex->index];
 	binding_ast char_lit = {.type.tag=NONE_TYPE};
-	//TODO escape sequences
 	char target = tok.string[0];
 	snprintf(tok.string, 5, "%d", (int8_t)target);
 	tok.len = 3;
@@ -3179,9 +3178,6 @@ add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords){
 
 uint64_t
 lex_numeric(token* const tok, uint64_t i, const char* const buffer, uint64_t size_bytes){
-	//TODO hex 0x...
-	//TODO octal 0o...
-	//TODO binary 0b...
 	tok->string[tok->len] = buffer[i];
 	tok->len += 1;
 	tok->type = TOKEN_INTEGER;
@@ -3244,6 +3240,48 @@ lex_numeric(token* const tok, uint64_t i, const char* const buffer, uint64_t siz
 			tok->string[tok->len] = k;
 			tok->len += 1;
 		}
+		return i;
+	}
+	return i;
+}
+
+uint64_t
+lex_char(token* const tok, uint64_t i, const char* const buffer, uint64_t size_bytes, char* err){
+	tok->type = TOKEN_CHAR;
+	char char_item = buffer[++i];
+	if (i >= size_bytes){
+		snprintf(err, ERROR_BUFFER, "Lexing Error, unexpected end of file\n");
+		return i;
+	}
+	if (char_item == '\\'){
+		char_item = buffer[++i];
+		if (i >= size_bytes){
+			snprintf(err, ERROR_BUFFER, "Lexing Error, unexpected end of file\n");
+			return i;
+		}
+		switch(char_item){
+		case 'a': char_item = '\a'; break;
+		case 'b': char_item = '\b'; break;
+		case 'e': char_item = '\033'; break;
+		case 'f': char_item = '\f'; break;
+		case 'n': char_item = '\n'; break;
+		case 'r': char_item = '\r'; break;
+		case 't': char_item = '\t'; break;
+		case 'v': char_item = '\v'; break;
+		case '\\': char_item = '\\'; break;
+		case '\'': char_item = '\''; break;
+		case '"': char_item = '"'; break;
+		case '?': char_item = '\?'; break;
+		default:
+			snprintf(err, ERROR_BUFFER, "Lexing error unexpected escape character type '\\%c' (%d) \n", char_item, char_item);
+			return i;
+		}
+	}
+	tok->string[tok->len] = char_item;
+	tok->len += 1;
+	char_item = buffer[++i];
+	if (char_item != '\'' || i >= size_bytes){
+		snprintf(err, ERROR_BUFFER, " Lexing error, expected (') to end character literal\n");
 		return i;
 	}
 	return i;
@@ -3344,26 +3382,8 @@ lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_
 		case '#': tok.type = TOKEN_ENCLOSE; break;
 		case ',': tok.type = TOKEN_COMMA; break;
 		case '\'': 
-			tok.type = TOKEN_CHAR;
-			char char_item = buffer[++i];
-			if (i >= size_bytes){
-				snprintf(err, ERROR_BUFFER, "Lexing Error, unexpected end of file\n");
-				return tokens;
-			}
-			if (char_item == '\\'){
-				char_item = buffer[++i];
-				if (i >= size_bytes){
-					snprintf(err, ERROR_BUFFER, "Lexing Error, unexpected end of file\n");
-					return tokens;
-				}
-				tok.string[tok.len] = char_item;
-				tok.len += 1;
-			}
-			tok.string[tok.len] = char_item;
-			tok.len += 1;
-			char_item = buffer[++i];
-			if (char_item != '\'' || i >= size_bytes){
-				snprintf(err, ERROR_BUFFER, " Lexing error, expected (') to end character literal\n");
+			i = lex_char(&tok, i, buffer, size_bytes, err);
+			if (*err != 0){
 				return tokens;
 			}
 			tok.string[tok.len] = '\0';

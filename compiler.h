@@ -137,6 +137,7 @@ void parse_load(lexer* const lex, pool* const mem, uint64_t index);
 void hash_keyword(TOKEN_TYPE_TAG_map* keywords, const char* key, TOKEN_TYPE_TAG value);
 void add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords);
 
+uint64_t lex_char(token* const tok, uint64_t i, const char* const buffer, uint64_t size_bytes, char* err);
 uint64_t lex_numeric(token* const tok, uint64_t i, const char* const buffer, uint64_t size_bytes);
 token* lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_t* token_count, char** string_buffer, char* err);
 int compile_file(char* filename);
