@@ -7,6 +7,7 @@
 #include "compiler.h"
 #include "pool.h"
 
+MAP_IMPL(structure_ast)
 MAP_IMPL(function_ast)
 MAP_IMPL(new_type_ast)
 MAP_IMPL(alias_ast)
@@ -1540,12 +1541,14 @@ transform_ast(ast* const tree, pool* const mem, char* err){
 	};
 	push_builtins(&roll, mem);
 	roll.builtin_stack_frame = roll.binding_count;
+	structure_ast_map touched_structs = structure_ast_map_init(mem);
 	for (uint32_t i = 0;i<tree->new_type_c;++i){
 		new_type_ast* t = &tree->new_type_v[i];
 		if (t->type.tag != STRUCT_TYPE){
 			continue;
 		}
-		roll_data_layout(tree, t->type.data.structure, t->name, err);
+		structure_ast_map_insert(&touched_structs, t->name.string, t->type.data.structure);
+		roll_data_layout(tree, t->type.data.structure, t->name, &touched_structs, err);
 		if (*err != 0){
 			return;
 		}
@@ -1564,8 +1567,7 @@ transform_ast(ast* const tree, pool* const mem, char* err){
 }
 
 void
-roll_data_layout(ast* const tree, structure_ast* target, token name, char* err){
-	//TODO this traversal probably has a faster memoized traversal
+roll_data_layout(ast* const tree, structure_ast* const target, token name, structure_ast_map* const touched, char* err){
 	for (uint32_t i = 0;i<target->binding_c;++i){
 		type_ast inner = target->binding_v[i].type;
 		if (inner.tag != STRUCT_TYPE){
@@ -1591,13 +1593,17 @@ roll_data_layout(ast* const tree, structure_ast* target, token name, char* err){
 				continue;
 			}
 		}
-		roll_data_layout(tree, inner.data.structure, name, err);
+		if (structure_ast_map_access(touched, inner.data.user.string) != NULL){
+			continue;
+		}
+		roll_data_layout(tree, inner.data.structure, name, touched, err);
+		structure_ast_map_insert(touched, inner.data.user.string, inner.data.structure);
 		if (*err != 0){
 			return;
 		}
 	}
 	for (uint32_t i = 0;i<target->union_c;++i){
-		roll_data_layout(tree, &target->union_v[i], name, err);
+		roll_data_layout(tree, &target->union_v[i], name, touched, err);
 		if (*err != 0){
 			return;
 		}
@@ -1612,11 +1618,10 @@ roll_data_layout(ast* const tree, structure_ast* target, token name, char* err){
 		procedures dont capture at all, can be invoked with function arguments
 	3 parametric types/ buffers/ pointers
 		1 monomorphization of parametric types/functions that take them
-	4 Finish semantic pass stuff
-		1 all the little todos
-		2 fix type equality
-		3 struct size determination
-	5 struct ordering
+	4 Finish semantic pass stuff            < TODO current task
+		1 fix type equality
+		2 struct size determination
+	5 Good error system
 	6 determine what code will be used and what code will not be used
 	7 matches on enumerated struct union, maybe with @ / enum access with tag?
 	8 IR
@@ -1626,7 +1631,7 @@ roll_data_layout(ast* const tree, structure_ast* target, token name, char* err){
 		1 C proof of concept understanding
 		2 maybe a native x86 or arm or risc-V
 		3 custom vm for game OS (hla doc)
-	10 Good error system
+	10 struct ordering
 	11 memory optimizations
 		1 separate buffers for different nodes
 		2 node size starts small and can resize, old can be reused for next node

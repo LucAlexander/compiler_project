@@ -185,6 +185,8 @@ typedef struct structure_ast{
 	uint32_t union_c;
 } structure_ast;
 
+MAP_DEF(structure_ast)
+
 uint8_t struct_cmp(structure_ast* const a, structure_ast* const b);
 void show_structure(const structure_ast* const structure, uint8_t indent);
 
@@ -471,7 +473,7 @@ void push_label_scope(scope* const s);
 void pop_label_scope(scope* const s);
 
 void transform_ast(ast* const tree, pool* const mem, char* err);
-void roll_data_layout(ast* const tree, structure_ast* const target, token name, char* err);
+void roll_data_layout(ast* const tree, structure_ast* const target, token name, structure_ast_map* const touched, char* err);
 void roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err);
 void roll_struct_type(scope* const roll, ast* const tree, pool* const mem, structure_ast* const target, char* err);
 type_ast roll_expression(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, type_ast expected_type, uint32_t argc, expression_ast* const argv, uint8_t prevent_lift, char* err);
