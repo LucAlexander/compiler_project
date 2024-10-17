@@ -1607,7 +1607,7 @@ roll_data_layout(ast* const tree, structure_ast* target, token name, char* err){
 /*
  * TODO LIST
 
-	1 round off parser, floats, ints, chars              < TODO current task
+	1 better casting, allowing coersion between pointers and integers, floats and integers, pointer arithmetic
  	2 procedures can just return, thats all, no other anything, just normal functions otherwise
 		procedures dont capture at all, can be invoked with function arguments
 	3 parametric types/ buffers/ pointers
@@ -3438,7 +3438,31 @@ lex_cstr(const char* const buffer, uint64_t size_bytes, pool* const mem, uint64_
 		case '"':
 			tok.type = TOKEN_STRING;
 			for (char k = buffer[++i];i<size_bytes;k = buffer[++i]){
-				if (k == '"'){
+				if (k == '\\'){
+					k = buffer[++i];
+					if (i >= size_bytes){
+						snprintf(err, ERROR_BUFFER, "Lexing Error, unexpected end of file when parsing escape character in string literal\n");
+						return tokens;
+					}
+					switch(k){
+					case 'a': k = '\a'; break;
+					case 'b': k = '\b'; break;
+					case 'e': k = '\033'; break;
+					case 'f': k = '\f'; break;
+					case 'n': k = '\n'; break;
+					case 'r': k = '\r'; break;
+					case 't': k = '\t'; break;
+					case 'v': k = '\v'; break;
+					case '\\': k = '\\'; break;
+					case '\'': k = '\''; break;
+					case '"': k = '"'; break;
+					case '?': k = '\?'; break;
+					default:
+						snprintf(err, ERROR_BUFFER, "Lexing error unexpected escape character type '\\%c' (%d) \n", k, k);
+						return tokens;
+					}
+				}
+				else if (k == '"'){
 					break;
 				}
 				tok.string[tok.len] = k;
