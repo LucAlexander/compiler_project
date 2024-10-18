@@ -1618,19 +1618,18 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
 		procedures dont capture at all, can be invoked with function arguments
 	3 parametric types/ buffers/ pointers
 		1 monomorphization of parametric types/functions that take them
-	4 struct size determination     <TODO current task
-	5 Good error system
-	6 determine what code will be used and what code will not be used
-	7 matches on enumerated struct union, maybe with @ / enum access with tag?
-	8 IR
+	4 Good error system
+	5 determine what code will be used and what code will not be used
+	6 matches on enumerated struct union, maybe with @ / enum access with tag?
+	7 IR
 		1 group function application into distinct calls for defined top level functions
 		2 create structures for partial application cases
-	9 code generation
+	8 code generation
 		1 C proof of concept understanding
 		2 maybe a native x86 or arm or risc-V
 		3 custom vm for game OS (hla doc)
-	10 struct ordering
-	11 memory optimizations
+	9 struct ordering
+	10 memory optimizations
 		1 separate buffers for different nodes
 		2 node size starts small and can resize, old can be reused for next node
 		3 resizing doesnt need a copy if last node in buffer
@@ -2444,34 +2443,114 @@ roll_expression(
 	return expected_type;
 }
 
+uint8_t
+fitsBits(int64_t x, uint8_t n) {
+   int64_t res = -1;
+   if(x >= 0){
+       res = (x >> (n - 1));
+   }
+   else if (x < 0){
+       res = (~x >> (n - 1));
+   }
+   return !res;
+}
+
 uint64_t
 struct_size_helper(ast* const tree, structure_ast target_struct, char* err){
-	uint64_t max_alignment = 0;
-	uint64_t prev_alignment = 0;
-	uint64_t current_size = 0;
+	uint64_t max_union = 0;
+	uint8_t bit_size = 8;
+	uint8_t bytes = 1;
+	for (uint32_t i = 0;i<target_struct.union_c;++i){
+		uint64_t alignment = struct_size_helper(tree, target_struct.union_v[i], err);
+		if (*err != 0){
+			return 0;
+		}
+		if (alignment > max_union){
+			max_union = alignment;
+		}
+		int64_t encoding = target_struct.encoding[i];
+		while (!fitsBits(encoding, bit_size) && bytes < 9){
+			bytes += 1;
+			bit_size *= 2;
+		}
+		if (bytes > 8){
+			snprintf(err, ERROR_BUFFER, " [!] encoding does not fit in 8 bytes\n");
+			return 0;
+		}
+	}
+	uint64_t max_alignment = max_union;
+	uint64_t prev_alignment = max_union;
+	uint64_t current_size = max_union;
+	uint64_t ones = 0;
+	if (max_alignment == 1){
+		ones = 1;
+	}
 	for (uint32_t i = 0;i<target_struct.binding_c;++i){
 		uint64_t alignment = type_size(tree, target_struct.binding_v[i].type, err);
 		if (*err != 0){
 			return current_size;
 		}
-		if (prev_alignment != 0 && prev_alignment < alignment){
-			current_size += alignment-prev_alignment;
-		}
-		if (alignment > max_alignment){
+		if (prev_alignment == 0){
+			current_size += alignment;
+			prev_alignment = alignment;
 			max_alignment = alignment;
+			continue;
 		}
 		if (prev_alignment == 1 && alignment == 1){
-			prev_alignment += alignment;
+			current_size += 1;
+			ones += 1;
+			continue;
 		}
-		else{
+		if (ones > 0){
+			prev_alignment = ones+1;
+			ones = 0;
+		}
+		if (prev_alignment < alignment){
+			if (alignment > max_alignment){
+				max_alignment = alignment;
+			}
+			current_size += alignment + (alignment-prev_alignment);
 			prev_alignment = alignment;
+			continue;
 		}
+		prev_alignment = alignment;
 		current_size += alignment;
+	}
+	if (target_struct.union_c != 0){
+		uint64_t alignment = bytes;
+		if (prev_alignment == 0){
+			current_size += alignment;
+			prev_alignment = alignment;
+			max_alignment = alignment;
+		}
+		else if (prev_alignment == 1 && alignment == 1){
+			current_size += 1;
+			ones += 1;
+		}
+		else {
+			if (ones > 0){
+				prev_alignment = ones+1;
+				ones = 0;
+			}
+			if (prev_alignment < alignment){
+				if (alignment > max_alignment){
+					max_alignment = alignment;
+				}
+				current_size += alignment + (alignment-prev_alignment);
+				prev_alignment = alignment;
+			}
+			else{
+				prev_alignment = alignment;
+				current_size += alignment;
+			}
+		}
 	}
 	if (max_alignment == 0 || max_alignment == 1){
 		return current_size;
 	}
-	current_size += max_alignment-(current_size % max_alignment);
+	if (current_size % max_alignment != 0){
+		current_size += max_alignment-(current_size % max_alignment);
+	}
 	return current_size;
 }
 
