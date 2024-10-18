@@ -1655,7 +1655,7 @@ handle_procedural_statement(scope* const roll, ast* const tree, pool* const mem,
 		snprintf(err, ERROR_BUFFER, " [!] Statement in block did not invoke procedure\n");
 		return;
 	}
-	if (type_cmp(&expected_type, statement_return.data.pointer, FOR_APPLICATION) != 0){
+	if (type_applies(&expected_type, statement_return.data.pointer) != 0){
 		pop_frame(roll);
 		snprintf(err, ERROR_BUFFER, " [!] Statement expression branch returned incorrect type to root block\n");
 		return;
@@ -1941,14 +1941,14 @@ roll_expression(
 			}
 		}
 		if (is_mutation == 1){
-			if (type_cmp(&lefttype, &full_type, FOR_MUTATION) != 0){
+			if (type_mutates(&lefttype, &full_type) != 0){
 				snprintf(err, ERROR_BUFFER, " [!] Left side of mutation must match right type, and be mutable\n");
 				return lefttype;
 			}
 			full_type = lefttype;
 		}
 		if (expected_type.tag != NONE_TYPE){
-			if (type_cmp(&expected_type, &full_type, FOR_APPLICATION) != 0){
+			if (type_applies(&expected_type, &full_type) != 0){
 				snprintf(err, ERROR_BUFFER, " [!] Application expression returned unexpected type\n");
 				return full_type;
 			}
@@ -1989,11 +1989,11 @@ roll_expression(
 			}
 			return expr->data.binding.type;
 		}
-		if (type_cmp(&expected_type, bound_type, FOR_APPLICATION) != 0){
+		if (type_applies(&expected_type, bound_type) != 0){
 			type_ast expected_alias = expected_type;
 			type_ast bound_alias = *bound_type;
 			reduce_aliases(tree, &expected_alias, &bound_alias);
-			if (type_cmp(&expected_alias, &bound_alias, FOR_APPLICATION) != 0){
+			if (type_applies(&expected_alias, &bound_alias) != 0){
 				snprintf(err, ERROR_BUFFER, " [!] Binding '%s' was not the expected type\n", expr->data.binding.name.string);
 				return expected_type;
 			}
@@ -2017,14 +2017,14 @@ roll_expression(
 			if (*err != 0){
 				return descended_type;
 			}
-			if (type_cmp(&descended_type, &expr->data.binding.type, FOR_APPLICATION) != 0){
+			if (type_applies(&descended_type, &expr->data.binding.type) != 0){
 				snprintf(err, ERROR_BUFFER, " [!] Expected user primitive type did not match literal primitive value\n");
 				return descended_type;
 			}
 			expr->data.binding.type = expected_type;
 			return expected_type;
 		}
-		if (type_cmp(&expected_type, &expr->data.binding.type, FOR_APPLICATION) != 0){
+		if (type_applies(&expected_type, &expr->data.binding.type) != 0){
 			snprintf(err, ERROR_BUFFER, " [!] Primitive type mismatch\n");
 		}
 		return expr->data.binding.type;
@@ -2094,7 +2094,7 @@ roll_expression(
 					.tag=PRIMITIVE_TYPE,
 					.data.primitive=INT_ANY
 				};
-				if (type_cmp(&arb_int, &arg_type, FOR_APPLICATION) == 0){
+				if (type_applies(&arb_int, &arg_type) == 0){
 					type_ast base_typ;
 					switch(d_full_type.tag){
 					case POINTER_TYPE:
@@ -2228,7 +2228,7 @@ roll_expression(
 							apl->data.block.type = target_binding.type;
 							return target_binding.type;
 						}
-						if (type_cmp(&expected_type, &target_binding.type, FOR_APPLICATION) != 0){
+						if (type_applies(&expected_type, &target_binding.type) != 0){
 							snprintf(err, ERROR_BUFFER, " [!] Structure access returned unexpected type\n");
 							return access_full_type;
 						}
@@ -2256,12 +2256,12 @@ roll_expression(
 			if (*err != 0){
 				return descended_type;
 			}
-			if (type_cmp(&descended_type, &access_full_type, FOR_APPLICATION) != 0){
+			if (type_applies(&descended_type, &access_full_type) != 0){
 				snprintf(err, ERROR_BUFFER, " [!] Expected user primitive type did not match structure access\n");
 				return descended_type;
 			}
 		}
-		else if (type_cmp(&expected_type, &access_full_type, FOR_APPLICATION) != 0){
+		else if (type_applies(&expected_type, &access_full_type) != 0){
 			snprintf(err, ERROR_BUFFER, " [!] Structure access returned unexpected type\n");
 			return access_full_type;
 		}
@@ -2301,7 +2301,7 @@ roll_expression(
 			if (*err != 0){
 				return constructed;
 			}
-			if (type_cmp(&expected_type, &constructed, FOR_APPLICATION) != 0){
+			if (type_applies(&expected_type, &constructed) != 0){
 				snprintf(err, ERROR_BUFFER, " [!] Lambda expression returned unexpected type\n");
 				return constructed;
 			}
@@ -2417,7 +2417,7 @@ roll_expression(
 		if (expected_type.tag == NONE_TYPE){
 			return cast_left_type;
 		}
-		if (type_cmp(&expected_type, &cast_left_type, FOR_APPLICATION) != 0){
+		if (type_applies(&expected_type, &cast_left_type) != 0){
 			snprintf(err, ERROR_BUFFER, " [!] Pointed type cast to mismatched type\n");
 			return cast_left_type;
 		}
@@ -2673,32 +2673,39 @@ apply_type(type_ast* const func, char* err){
 }
 
 uint8_t
-type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose){
+type_applies(type_ast* const a, type_ast* const b){
 	if (a->tag == INTERNAL_ANY_TYPE || b->tag == INTERNAL_ANY_TYPE){
 		return 0;
 	}
-	switch(purpose){
-	case FOR_MUTATION:
-		if (a->mut == 0 || a->tag == PROCEDURE_TYPE){
-			return 1;
-		}
-		break;
-	case FOR_APPLICATION:
-		if (a->tag == POINTER_TYPE && b->tag == BUFFER_TYPE){
-			return type_cmp(a->data.pointer, b->data.buffer.base, FOR_EQUALITY);
-		}
-		break;
-	default:
-	case FOR_EQUALITY:
-		//TODO im not fully convinced nothing should go here for mutation's sake
+	if (a->tag == POINTER_TYPE && b->tag == BUFFER_TYPE){
+		return type_cmp(a->data.pointer, b->data.buffer.base);
+	}
+	return type_cmp(a, b);
+}
+
+uint8_t
+type_mutates(type_ast* const a, type_ast* const b){
+	if (a->tag == INTERNAL_ANY_TYPE || b->tag == INTERNAL_ANY_TYPE){
+		return 0;
+	}
+	if (a->mut == 0 || a->tag == PROCEDURE_TYPE){
+		return 1;
+	}
+	return type_cmp(a, b);
+}
+
+uint8_t
+type_cmp(type_ast* const a, type_ast* const b){
+	if (a->tag == INTERNAL_ANY_TYPE || b->tag == INTERNAL_ANY_TYPE){
+		return 0;
 	}
 	if (a->tag != b->tag){
 		return 1;
 	}
 	switch (a->tag){
 	case FUNCTION_TYPE:
-		return type_cmp(a->data.function.left, b->data.function.left, FOR_EQUALITY)
-			 + type_cmp(a->data.function.right, b->data.function.right, FOR_EQUALITY);
+		return type_cmp(a->data.function.left, b->data.function.left)
+			 + type_cmp(a->data.function.right, b->data.function.right);
 	case PRIMITIVE_TYPE:
 		PRIMITIVE_TAGS a_cast = a->data.primitive;
 		PRIMITIVE_TAGS b_cast = b->data.primitive;
@@ -2708,13 +2715,13 @@ type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose){
 		if (a_cast > INT_ANY){
 			return 0;
 		}
-		return (a->data.primitive != b->data.primitive);//TODO this might need more nuance
+		return type_coerces(a_cast, b_cast);
 	case PROCEDURE_TYPE:
 	case POINTER_TYPE:
-		return type_cmp(a->data.pointer, b->data.pointer, FOR_EQUALITY);
+		return type_cmp(a->data.pointer, b->data.pointer);
 	case BUFFER_TYPE:
 		return (a->data.buffer.count != b->data.buffer.count)
-			 + type_cmp(a->data.buffer.base, b->data.buffer.base, FOR_EQUALITY);
+			 + type_cmp(a->data.buffer.base, b->data.buffer.base);
 	case USER_TYPE:
 		return strncmp(a->data.user.string, b->data.user.string, TOKEN_MAX);
 	case STRUCT_TYPE:
@@ -2725,7 +2732,39 @@ type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose){
 	return 1;
 }
 
-
+uint8_t
+type_coerces(PRIMITIVE_TAGS a, PRIMITIVE_TAGS b){
+	if (b == INT_ANY){
+		return !(a <= b);
+	}
+	if (b == FLOAT_ANY){
+		return (a <= INT_ANY);
+	}
+	switch (a){
+	case U8_TYPE:
+	case U16_TYPE:
+	case U32_TYPE:
+	case U64_TYPE:
+		return !(b <= a);
+	case I8_TYPE:
+		return (b != I8_TYPE);
+	case I16_TYPE:
+		return (b > U8_TYPE && b < I8_TYPE) || (b > a);
+	case I32_TYPE:
+		return (b < I8_TYPE && b > U16_TYPE) || (b > a);
+	case I64_TYPE:
+		return (b == U64_TYPE) || (b > a);
+	case INT_ANY:
+		return !(b <= a);
+	case F32_TYPE:
+		return (b==F64_TYPE);
+	case F64_TYPE:
+	case FLOAT_ANY:
+		return 1;
+	default:
+	}
+	return 1;
+}
 
 uint8_t
 struct_cmp(structure_ast* const a, structure_ast* const b){
@@ -2733,7 +2772,7 @@ struct_cmp(structure_ast* const a, structure_ast* const b){
 		return 1;
 	}
 	for (uint32_t i = 0;i<a->binding_c;++i){
-		if ((type_cmp(&a->binding_v[i].type, &b->binding_v[i].type, FOR_APPLICATION) != 0)
+		if ((type_applies(&a->binding_v[i].type, &b->binding_v[i].type) != 0)
 		 || (strncmp(a->binding_v[i].name.string, b->binding_v[i].name.string, TOKEN_MAX) != 0)){
 			return 1;
 		}
@@ -2822,7 +2861,7 @@ roll_statement_expression(
 		if (*err != 0){
 			return expected_type;
 		}
-		if (type_cmp(&btype, &atype, FOR_EQUALITY) != 0){
+		if (type_cmp(&btype, &atype) != 0){
 			snprintf(err, ERROR_BUFFER, " [!] Branch and alternate types in conditional statement expression do not match\n");
 			return expected_type;
 		}

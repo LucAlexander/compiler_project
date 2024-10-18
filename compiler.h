@@ -238,13 +238,10 @@ typedef struct type_ast {
 
 void show_type(const type_ast* const type);
 
-typedef enum TYPE_CMP_PURPOSE{
-	FOR_EQUALITY,
-	FOR_MUTATION,
-	FOR_APPLICATION
-}TYPE_CMP_PURPOSE;
-
-uint8_t type_cmp(type_ast* const a, type_ast* const b, TYPE_CMP_PURPOSE purpose);
+uint8_t type_applies(type_ast* const a, type_ast* const b);
+uint8_t type_mutates(type_ast* const a, type_ast* const b);
+uint8_t type_cmp(type_ast* const a, type_ast* const b);
+uint8_t type_coerces(PRIMITIVE_TAGS a, PRIMITIVE_TAGS b);
 
 typedef struct binding_ast{
 	type_ast type;
