@@ -725,7 +725,7 @@ parse_block_expression(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_
 		.data.block.type={.tag=NONE_TYPE},
 		.data.block.expr_c=0
 	};
-	outer.data.block.expr_v = pool_request(mem, MAX_ARGS*sizeof(expression_ast));
+	outer.data.block.expr_v = pool_request(mem, BLOCK_MAX*sizeof(expression_ast));
 	first = unwrap_single_application(first);
 	if (first.tag != NOP_EXPRESSION){
 		outer.data.block.expr_c = 1;
@@ -1618,9 +1618,7 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
 		procedures dont capture at all, can be invoked with function arguments
 	3 parametric types/ buffers/ pointers
 		1 monomorphization of parametric types/functions that take them
-	4 Finish semantic pass stuff            < TODO current task
-		1 fix type equality
-		2 struct size determination
+	4 struct size determination     <TODO current task
 	5 Good error system
 	6 determine what code will be used and what code will not be used
 	7 matches on enumerated struct union, maybe with @ / enum access with tag?
@@ -2447,8 +2445,54 @@ roll_expression(
 }
 
 uint64_t
-struct_size_helper(ast* const tree, structure_ast target_struct, uint64_t rolling_size, char* err){
-	return rolling_size;//TODO
+struct_size_helper(ast* const tree, structure_ast target_struct, char* err){
+	uint64_t max_alignment = 0;
+	uint64_t prev_alignment = 0;
+	uint64_t current_size = 0;
+	for (uint32_t i = 0;i<target_struct.binding_c;++i){
+		uint64_t alignment = type_size(tree, target_struct.binding_v[i].type, err);
+		if (*err != 0){
+			return current_size;
+		}
+		if (prev_alignment != 0 && prev_alignment < alignment){
+			current_size += alignment-prev_alignment;
+		}
+		if (alignment > max_alignment){
+			max_alignment = alignment;
+		}
+		if (prev_alignment == 1 && alignment == 1){
+			prev_alignment += alignment;
+		}
+		else{
+			prev_alignment = alignment;
+		}
+		current_size += alignment;
+	}
+	if (max_alignment == 0 || max_alignment == 1){
+		return current_size;
+	}
+	current_size += max_alignment-(current_size % max_alignment);
+	return current_size;
+}
+
+uint64_t
+primitive_size_helper(PRIMITIVE_TAGS p){
+	switch(p){
+	case U8_TYPE: return 1; 
+	case U16_TYPE: return 2; 
+	case U32_TYPE: return 4; 
+	case U64_TYPE: return 8; 
+	case I8_TYPE: return 1; 
+	case I16_TYPE: return 2; 
+	case I32_TYPE: return 4; 
+	case I64_TYPE: return 8; 
+	case INT_ANY: return 8; 
+	case F32_TYPE: return 4; 
+	case F64_TYPE: return 8; 
+	case FLOAT_ANY: return 8; 
+	default:
+	}
+	return 0;
 }
 
 uint64_t
@@ -2457,22 +2501,11 @@ type_size_helper(ast* const tree, type_ast target_type, uint64_t rolling_size, c
 	case FUNCTION_TYPE:
 		return rolling_size+8;
 	case PRIMITIVE_TYPE:
-		if (target_type.data.primitive == U8_TYPE) { return rolling_size+1; };
-		if (target_type.data.primitive == U16_TYPE) { return rolling_size+2; };
-		if (target_type.data.primitive == U32_TYPE) { return rolling_size+4; };
-		if (target_type.data.primitive == U64_TYPE) { return rolling_size+8; };
-		if (target_type.data.primitive == I8_TYPE) { return rolling_size+1; };
-		if (target_type.data.primitive == I16_TYPE) { return rolling_size+2; };
-		if (target_type.data.primitive == I32_TYPE) { return rolling_size+4; };
-		if (target_type.data.primitive == I64_TYPE) { return rolling_size+8; };
-		if (target_type.data.primitive == INT_ANY) { return rolling_size+8; };
-		if (target_type.data.primitive == F32_TYPE) { return rolling_size+4; };
-		if (target_type.data.primitive == F64_TYPE) { return rolling_size+8; };
-		if (target_type.data.primitive == FLOAT_ANY) { return rolling_size+8; };
+		return primitive_size_helper(target_type.data.primitive)+rolling_size;
 	case POINTER_TYPE:
 		return rolling_size+8;
 	case BUFFER_TYPE:
-		return rolling_size+8;
+		return target_type.data.buffer.count*type_size_helper(tree, *target_type.data.buffer.base, rolling_size, err);
 	case USER_TYPE:
 		type_ast inner = resolve_type_or_alias(tree, target_type, err);
 		if (*err != 0){
@@ -2480,7 +2513,7 @@ type_size_helper(ast* const tree, type_ast target_type, uint64_t rolling_size, c
 		}
 		return type_size_helper(tree, inner, rolling_size, err);
 	case STRUCT_TYPE:
-		return struct_size_helper(tree, *target_type.data.structure, rolling_size, err);
+		return rolling_size + struct_size_helper(tree, *target_type.data.structure, err);
 	case PROCEDURE_TYPE:
 		return rolling_size+8;
 	default:
@@ -2491,8 +2524,7 @@ type_size_helper(ast* const tree, type_ast target_type, uint64_t rolling_size, c
 	return 0;
 }
 
-uint64_t type_size(ast*
-		const tree, type_ast target_type, char* err){
+uint64_t type_size(ast* const tree, type_ast target_type, char* err){
 	return type_size_helper(tree, target_type, 0, err);
 }
 

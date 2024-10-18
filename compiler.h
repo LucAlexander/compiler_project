@@ -483,8 +483,9 @@ type_ast resolve_type_or_alias(ast* const tree, type_ast root, char* err);
 type_ast resolve_alias(ast* const tree, type_ast root, char* err);
 void reduce_aliases(ast* const tree, type_ast* left, type_ast* right);
 type_ast prepend_captures(type_ast start, binding_ast* captures, uint16_t total_captures, pool* const mem);
+uint64_t primitive_size_helper(PRIMITIVE_TAGS p);
 uint64_t type_size_helper(ast* const tree, type_ast target_type, uint64_t rolling_size, char* err);
-uint64_t struct_size_helper(ast* const tree, structure_ast target_struct, uint64_t rolling_size, char* err);
+uint64_t struct_size_helper(ast* const tree, structure_ast target_struct, char* err);
 uint64_t type_size(ast* const tree, type_ast target_type, char* err);
 void lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, binding_ast* captured_bindings, uint16_t total_captures, pool* const mem);
 
