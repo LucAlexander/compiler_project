@@ -1613,23 +1613,24 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
 /*
  * TODO LIST
 
-	1 better casting, allowing coersion between pointers and integers, floats and integers, pointer arithmetic
- 	2 procedures can just return, thats all, no other anything, just normal functions otherwise
+ 	1 procedures can just return, thats all, no other anything, just normal functions otherwise
 		procedures dont capture at all, can be invoked with function arguments
-	3 parametric types/ buffers/ pointers
+	2 parametric types/ buffers/ pointers
 		1 monomorphization of parametric types/functions that take them
-	4 Good error system
-	5 determine what code will be used and what code will not be used
-	6 matches on enumerated struct union, maybe with @ / enum access with tag?
-	7 IR
+	3 Good error system
+	4 matches on enumerated struct union, maybe with @ / enum access with tag?
+	5 IR
 		1 group function application into distinct calls for defined top level functions
-		2 create structures for partial application cases
-	8 code generation
+			1 figure out complete calls bs partial applications too
+			2 this matters for monomorphization, we need to figure out the order these need to happen and be implemented in
+			3 create structures for partial application cases
+		2 require main
+		3 determine what code will be used and what code will not be used
+	6 code generation
 		1 C proof of concept understanding
 		2 maybe a native x86 or arm or risc-V
 		3 custom vm for game OS (hla doc)
-	9 struct ordering
-	10 memory optimizations
+	7 memory optimizations
 		1 separate buffers for different nodes
 		2 node size starts small and can resize, old can be reused for next node
 		3 resizing doesnt need a copy if last node in buffer
@@ -4256,8 +4257,33 @@ main(int argc, char** argv){
 	}
 	if (strncmp(argv[1], "-h", TOKEN_MAX) == 0 || strncmp(argv[1], "-help", TOKEN_MAX) == 0){
 		printf("-h, -help    :  Display this list\n");
+		printf("-o, -out     :  Specify output file name\n");
 		printf("\n");
 		return 0;
 	}
+	char* output = NULL;
+	char* src = NULL;
+	for (uint16_t i = 1;i<argc;++i){
+		if (strncmp(argv[i], "-o", TOKEN_MAX) == 0 || strncmp(argv[i], "-out", TOKEN_MAX) == 0){
+			output = argv[i];
+			if (i+1 >= argc){
+				fprintf(stderr, "Expected output file after argument %s\n", argv[i]);
+				return 1;
+			}
+			i += 1;
+			output = argv[i];
+			continue;
+		}
+		src = argv[i];
+	}
+	if (src == NULL){
+		fprintf(stderr, "No source file specified for compilation\n");
+		return 1;
+	}
+	if (output == NULL){
+		compile_file(src); // TODO output file
+		return 0;
+	}
+	compile_file(src);
 	return 0;
 }
