@@ -99,7 +99,7 @@ add_to_tree(ast* const tree, lexer* const lex, pool* const mem, char* err){
 			tree->new_type_c += 1;
 		}
 		else if (tok.type == TOKEN_ALIAS){
-			alias_ast a = parse_alias(lex, mem, err);
+			alias_ast a = parse_new_type(lex, mem, err);
 			if (*err != 0){
 				return;
 			}
@@ -331,6 +331,7 @@ parse_type_params(lexer* const lex, pool* const mem, type_ast* const outer){
 		lex->index += 1;
 	}
 	parse_load(lex, mem, inner_save);
+	lex->index += 1;
 	if (paren == 1){
 		if (param.type != TOKEN_PAREN_CLOSE){
 			parse_load(lex, mem, save);
@@ -516,7 +517,14 @@ parse_new_type(lexer* const lex, pool* const mem, char* err){
 		return (new_type_ast){};
 	}
 	lex->index += 1;
+	type_ast outer = {
+		.param_c=0,
+		.param_v=NULL
+	};
+	parse_type_params(lex, mem, &outer);
 	type_ast type = parse_type(lex, mem, err, TOKEN_SEMI, 1);
+	type.param_c = outer.param_c;
+	type.param_v = outer.param_v;
 	if (*err != 0){
 		return (new_type_ast){};
 	}
@@ -568,24 +576,6 @@ parse_constant(lexer* const lex, pool* const mem, char* err){
 		return constant;
 	}
 	return constant;
-}
-
-alias_ast
-parse_alias(lexer* const lex, pool* const mem, char* err){
-	token name = lex->tokens[++lex->index];
-	if (name.type != TOKEN_IDENTIFIER){
-		snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected identifier for type new_type name, found '%s'\n", name.string);
-		return (new_type_ast){};
-	}
-	lex->index += 1;
-	type_ast type = parse_type(lex, mem, err, TOKEN_SEMI, 1);
-	if (*err != 0){
-		return (new_type_ast){};
-	}
-	return (new_type_ast){
-		.type=type,
-		.name=name
-	};
 }
 
 function_ast
