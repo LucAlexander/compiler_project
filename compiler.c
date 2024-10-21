@@ -308,13 +308,54 @@ parse_struct(lexer* const lex, pool* const mem, char* err){
 	return outer;
 }
 
+void
+parse_type_params(lexer* const lex, pool* const mem, type_ast* const outer){
+	uint64_t save = parse_save(lex, mem);
+	token param = lex->tokens[lex->index];
+	lex->index += 1;
+	uint8_t paren = 0;
+	if (param.type == TOKEN_PAREN_OPEN){
+		paren = 1;
+		param = lex->tokens[lex->index];
+		lex->index += 1;
+	}
+	uint64_t inner_save = save;
+	token* params = pool_request(mem, sizeof(token));
+	uint8_t param_c = 0;
+	while (param.type == TOKEN_IDENTIFIER){
+		params[param_c] = param;
+		param_c += 1;
+		inner_save = parse_save(lex, mem);
+		pool_request(mem, sizeof(token));
+		param = lex->tokens[lex->index];
+		lex->index += 1;
+	}
+	parse_load(lex, mem, inner_save);
+	if (paren == 1){
+		if (param.type != TOKEN_PAREN_CLOSE){
+			parse_load(lex, mem, save);
+			return;
+		}
+		param = lex->tokens[lex->index];
+		lex->index += 1;
+	}
+	if (param.type != TOKEN_DEPENDS){
+		parse_load(lex, mem, save);
+		return;
+	}
+	outer->param_c = param_c;
+	outer->param_v = params;
+}
+
 type_ast
 parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t consume){
 	token name = lex->tokens[lex->index];
 	type_ast outer = (type_ast){
 		.tag=USER_TYPE,
 		.data.user=name,
-		.mut=0
+		.mut=0,
+		.param_c=0,
+		.param_v=NULL
 	};
 	switch (name.type){
 	case TOKEN_BRACK_OPEN:
@@ -537,7 +578,7 @@ parse_alias(lexer* const lex, pool* const mem, char* err){
 		return (new_type_ast){};
 	}
 	lex->index += 1;
-	type_ast type = parse_type(lex, mem, err,  TOKEN_SEMI, 1);
+	type_ast type = parse_type(lex, mem, err, TOKEN_SEMI, 1);
 	if (*err != 0){
 		return (new_type_ast){};
 	}
@@ -549,7 +590,14 @@ parse_alias(lexer* const lex, pool* const mem, char* err){
 
 function_ast
 parse_function(lexer* const lex, pool* const mem, char* err, uint8_t allowed_enclosing){
+	type_ast outer = {
+		.param_c=0,
+		.param_v=NULL
+	};
+	parse_type_params(lex, mem, &outer);
 	type_ast type = parse_type(lex, mem, err, TOKEN_IDENTIFIER, 0);
+	type.param_c = outer.param_c;
+	type.param_v = outer.param_v;
 	if (*err != 0){
 		return (function_ast){
 			.type=type
@@ -3325,6 +3373,7 @@ add_keyword_hashes(TOKEN_TYPE_TAG_map* keywords){
 	hash_keyword(keywords, "~", TOKEN_BIT_COMP);
 	hash_keyword(keywords, "!", TOKEN_BOOL_NOT);
 	hash_keyword(keywords, "->", TOKEN_FUNC_IMPL);
+	hash_keyword(keywords, "=>", TOKEN_DEPENDS);
 	hash_keyword(keywords, "<|", TOKEN_PIPE_LEFT);
 	hash_keyword(keywords, "|>", TOKEN_PIPE_RIGHT);
 	hash_keyword(keywords, "//", TOKEN_COMMENT);

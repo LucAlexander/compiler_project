@@ -14,6 +14,7 @@
 #define MAX_ALIASES    1000
 #define MAX_IMPORTS     100
 #define MAX_ARGS 16
+#define MAX_PARAMS 8
 #define MAX_CAPTURES 256
 #define BLOCK_MAX 256
 #define ERROR_BUFFER 512
@@ -112,6 +113,7 @@ typedef enum TOKEN_TYPES {
 	TOKEN_SIZEOF,
 	TOKEN_BREAK,
 	TOKEN_CONTINUE,
+	TOKEN_DEPENDS,
 	TOKEN_EOF
 } TOKEN_TYPE_TAG;
 
@@ -234,6 +236,8 @@ typedef struct type_ast {
 		} buffer;
 	} data;
 	uint8_t mut;
+	uint8_t param_c;
+	token* param_v;
 } type_ast;
 
 void show_type(const type_ast* const type);
