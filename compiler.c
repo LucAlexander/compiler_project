@@ -1616,16 +1616,16 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
  	1 procedures can just return, thats all, no other anything, just normal functions otherwise
 		procedures dont capture at all, can be invoked with function arguments
 	2 parametric types/ buffers/ pointers
-		1 monomorphization of parametric types/functions that take them
+		0 rewrite type parsing, type definition parsing, function parsing, alias definition parsing
+		1 track parametric type parameters and validate on roll pass
+		2 divide applications into partials and full applications for function calls, create copies of functions and types that are parametric applied, pause to follow through
+		3 need a way to find out if we have an applied version ofthe function or type already so we dont "over-morphize"
+		4 monomorphization of parametric types/functions that take them
 	3 Good error system
 	4 matches on enumerated struct union, maybe with @ / enum access with tag?
-	5 IR
-		1 group function application into distinct calls for defined top level functions
-			1 figure out complete calls bs partial applications too
-			2 this matters for monomorphization, we need to figure out the order these need to happen and be implemented in
-			3 create structures for partial application cases
-		2 require main
-		3 determine what code will be used and what code will not be used
+	5 second pass
+		1 require main
+		2 determine what code will be used and what code will not be used
 	6 code generation
 		1 C proof of concept understanding
 		2 maybe a native x86 or arm or risc-V
@@ -1660,9 +1660,9 @@ handle_procedural_statement(scope* const roll, ast* const tree, pool* const mem,
 	}
 }
 
-void roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err){
-	switch
-		(target->tag){
+void
+roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err){
+	switch (target->tag){
 	case FUNCTION_TYPE:
 		roll_type(roll, tree, mem, target->data.function.left, err);
 		if (*err != 0){
