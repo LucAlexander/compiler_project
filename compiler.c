@@ -1886,6 +1886,12 @@ roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const t
 		roll_struct_type(roll, tree, mem, target->data.structure, err);
 		return;
 	case USER_TYPE:
+		for (uint8_t i = 0;i<target->data.user.param_c;++i){
+			roll_type(roll, tree, mem, &target->data.user.param_v[i], err);
+			if (*err != 0){
+				return;
+			}
+		}
 	case PRIMITIVE_TYPE:
 	case NONE_TYPE:
 		return;
