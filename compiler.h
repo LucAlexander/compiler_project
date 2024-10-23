@@ -227,7 +227,11 @@ typedef struct type_ast {
 		PRIMITIVE_TAGS primitive;
 		struct type_ast* pointer; // also used for procedure
 		structure_ast* structure;
-		token user;
+		struct {
+			token user;
+			struct type_ast* param_v;
+			uint8_t param_c;
+		} user;
 		struct {
 			struct type_ast* base;
 			uint32_t count;
@@ -408,9 +412,9 @@ ast parse(token* const tokens, pool* const mem, uint64_t token_count, char* stri
 void add_to_tree(ast* const tree, lexer* const lex, pool* const mem, char* err);
 void parse_import(ast* const tree, lexer* const lex, pool* const mem, char* err);
 uint8_t already_imported(ast* const tree, token filename);
+void parse_type_params(lexer* const lex, pool* const mem, type_ast* const outer);
 type_ast parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t consume);
 new_type_ast parse_new_type(lexer* const lex, pool* const mem, char* err);
-alias_ast parse_alias(lexer* const lex, pool* const mem, char* err);
 constant_ast parse_constant(lexer* const lex, pool* const mem, char* err);
 function_ast parse_function(lexer* const lex, pool* const mem, char* err, uint8_t allowed_enclosing);
 expression_ast parse_lambda(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t* simple);

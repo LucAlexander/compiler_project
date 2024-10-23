@@ -349,11 +349,13 @@ parse_type_params(lexer* const lex, pool* const mem, type_ast* const outer){
 }
 
 type_ast
-parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t consume){
+parse_eager_type_params(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token){
 	token name = lex->tokens[lex->index];
 	type_ast outer = (type_ast){
 		.tag=USER_TYPE,
-		.data.user=name,
+		.data.user.user=name,
+		.data.user.param_v=NULL,
+		.data.user.param_c=0,
 		.mut=0,
 		.param_c=0,
 		.param_v=NULL
@@ -446,6 +448,150 @@ parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_toke
 		}
 		break;
 	}
+	return outer;
+}
+
+type_ast
+parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_token, uint8_t consume){
+	token name = lex->tokens[lex->index];
+	type_ast outer = (type_ast){
+		.tag=USER_TYPE,
+		.data.user.user=name,
+		.data.user.param_v=NULL,
+		.data.user.param_c=0,
+		.mut=0,
+		.param_c=0,
+		.param_v=NULL
+	};
+	switch (name.type){
+	case TOKEN_BRACK_OPEN:
+		lex->index += 1;
+		outer = parse_type(lex, mem, err, TOKEN_BRACK_CLOSE, 1);
+		if (*err != 0){
+			return outer;
+		}
+		if (outer.tag != BUFFER_TYPE){
+			type_ast base = outer;
+			outer.tag = POINTER_TYPE;
+			outer.data.pointer = pool_request(mem, sizeof(type_ast));
+			*outer.data.pointer = base;
+			outer.mut = 0;
+		}
+		break;
+	case TOKEN_PAREN_OPEN:
+		lex->index += 1;
+		outer = parse_type(lex, mem, err, TOKEN_PAREN_CLOSE, 1);
+		if (*err != 0){
+			return outer;
+		}
+		break;
+	case TOKEN_BRACE_OPEN:
+		structure_ast s = parse_struct(lex, mem, err);
+		if (*err != 0){
+			return outer;
+		}
+		outer.tag = STRUCT_TYPE;
+		outer.data.structure = pool_request(mem, sizeof(structure_ast));
+		*outer.data.structure = s;
+		break;
+	case TOKEN_U8:
+		outer.tag=PRIMITIVE_TYPE;
+		outer.data.primitive = U8_TYPE;
+		break;
+	case TOKEN_U16:
+		outer.tag=PRIMITIVE_TYPE;
+		outer.data.primitive = U16_TYPE;
+		break;
+	case TOKEN_U32:
+		outer.tag=PRIMITIVE_TYPE;
+		outer.data.primitive = U32_TYPE;
+		break;
+	case TOKEN_U64:
+		outer.tag=PRIMITIVE_TYPE;
+		outer.data.primitive = U64_TYPE;
+		break;
+	case TOKEN_I8:
+		outer.tag=PRIMITIVE_TYPE;
+		outer.data.primitive = I8_TYPE;
+		break;
+	case TOKEN_I16:
+		outer.tag=PRIMITIVE_TYPE;
+		outer.data.primitive = I16_TYPE;
+		break;
+	case TOKEN_I32:
+		outer.tag=PRIMITIVE_TYPE;
+		outer.data.primitive = I32_TYPE;
+		break;
+	case TOKEN_I64:
+		outer.tag=PRIMITIVE_TYPE;
+		outer.data.primitive = I64_TYPE;
+		break;
+	case TOKEN_F32:
+		outer.tag=PRIMITIVE_TYPE;
+		outer.data.primitive=F32_TYPE;
+		break;
+	case TOKEN_F64:
+		outer.tag=PRIMITIVE_TYPE;
+		outer.data.primitive=F64_TYPE;
+		break;
+	case TOKEN_PROC:
+		outer.tag=PROCEDURE_TYPE;
+		lex->index += 1;
+		type_ast procedure_optional = parse_type(lex, mem, err, end_token, 0);
+		if (*err != 0){
+			return outer;
+		}
+		outer.data.pointer = pool_request(mem, sizeof(type_ast));
+		*outer.data.pointer = procedure_optional;
+		break;
+	default:
+		if (name.type!=TOKEN_IDENTIFIER){
+			snprintf(err, ERROR_BUFFER, " <!> Parsing Error at : Expected type name, found non identifier '%s'\n", name.string);
+			return (type_ast){.tag=NONE_TYPE};
+		}
+		uint64_t param_copy;
+		if (outer.data.user.param_v == NULL){
+			outer.data.user.param_v = pool_request(mem, MAX_PARAMS*sizeof(type_ast));
+		}
+		while (*err == 0){
+			param_copy = parse_save(lex, mem);
+			token iden_end = lex->tokens[++lex->index];
+			if (iden_end.type == end_token || (end_token == TOKEN_IDENTIFIER && iden_end.type == TOKEN_SYMBOL)){
+				if (consume == 0){
+					parse_load(lex, mem, param_copy);
+				}
+				if (end_token == TOKEN_BRACK_CLOSE){
+					if (outer.data.user.param_c > 0){
+						outer.data.user.param_c -= 1;
+						type_ast* const last = &outer.data.user.param_v[outer.data.user.param_c];
+						if (last->tag == USER_TYPE){
+							token identok = last->data.user.user;
+							type_ast idenbase = outer;
+							outer.tag = BUFFER_TYPE;
+							outer.data.buffer.base = pool_request(mem, sizeof(type_ast));
+							*outer.data.buffer.base = idenbase;
+							outer.data.buffer.count = 0;
+							outer.data.buffer.constant = 1;
+							outer.data.buffer.const_binding = identok;
+							outer.mut = 0;
+							outer.param_v = NULL;
+							outer.param_c = 0;
+						}
+					}
+				}
+				return outer;
+			}
+			type_ast parameter = parse_eager_type_params(lex, mem, err, end_token);
+			if (*err != 0){
+				break;
+			}
+			outer.data.user.param_v[outer.data.user.param_c] = parameter;
+			outer.data.user.param_c += 1;
+		}
+		*err = 0;
+		parse_load(lex, mem, param_copy);
+		break;
+	}
 	while (lex->index < lex->token_count){
 		uint64_t copy = parse_save(lex, mem);
 		token tok = lex->tokens[++lex->index];
@@ -465,7 +611,7 @@ parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_toke
 			break;
 		case TOKEN_IDENTIFIER:
 			if (end_token != TOKEN_BRACK_CLOSE){
-				snprintf(err, ERROR_BUFFER, " <!> Parser Error at : Type given buffer size when not buffer or pointer\n");
+				snprintf(err, ERROR_BUFFER, " <!> Parser Error : Unexpected constant or type parameter in non buffer type\n");
 				return outer;
 			}
 			type_ast idenbase = outer;
@@ -476,6 +622,8 @@ parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_toke
 			outer.data.buffer.constant = 1;
 			outer.data.buffer.const_binding = tok;
 			outer.mut = 0;
+			outer.param_v = NULL;
+			outer.param_c = 0;
 			break;
 		case TOKEN_INTEGER:
 			if (end_token != TOKEN_BRACK_CLOSE){
@@ -489,6 +637,8 @@ parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_toke
 			outer.data.buffer.count = atoi(tok.string);
 			outer.data.buffer.constant = 0;
 			outer.mut = 0;
+			outer.param_v = NULL;
+			outer.param_c = 0;
 			break;
 		case TOKEN_FUNC_IMPL:
 			type_ast arg = outer;
@@ -497,6 +647,8 @@ parse_type(lexer* const lex, pool* const mem, char* err, TOKEN_TYPE_TAG end_toke
 			outer.data.function.right = pool_request(mem, sizeof(type_ast));
 			*outer.data.function.left = arg;
 			outer.mut = 0;
+			outer.param_v = NULL;
+			outer.param_c = 0;
 			lex->index += 1;
 			*outer.data.function.right = parse_type(lex, mem, err, end_token, consume);
 			return outer;
@@ -1613,11 +1765,11 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
 				continue;
 			}
 			while (inner.tag == USER_TYPE){
-				if (strncmp(name.string, inner.data.user.string, TOKEN_MAX) == 0){
+				if (strncmp(name.string, inner.data.user.user.string, TOKEN_MAX) == 0){
 					snprintf(err, ERROR_BUFFER, " Struct nesting error\n");
 					return;
 				}
-				new_type_ast* primitive_new_type = new_type_ast_map_access(&tree->types, inner.data.user.string);
+				new_type_ast* primitive_new_type = new_type_ast_map_access(&tree->types, inner.data.user.user.string);
 				if (primitive_new_type != NULL){
 					inner = primitive_new_type->type;
 					continue;
@@ -1631,11 +1783,11 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
 				continue;
 			}
 		}
-		if (structure_ast_map_access(touched, inner.data.user.string) != NULL){
+		if (structure_ast_map_access(touched, inner.data.user.user.string) != NULL){
 			continue;
 		}
 		roll_data_layout(tree, inner.data.structure, name, touched, err);
-		structure_ast_map_insert(touched, inner.data.user.string, inner.data.structure);
+		structure_ast_map_insert(touched, inner.data.user.user.string, inner.data.structure);
 		if (*err != 0){
 			return;
 		}
@@ -2383,6 +2535,9 @@ roll_expression(
 			focus->tag = FUNCTION_TYPE;
 			focus->data.function.left = pool_request(mem, sizeof(type_ast));
 			focus->data.function.right = pool_request(mem, sizeof(type_ast));
+			focus->mut = 0;
+			focus->param_c = 0;
+			focus->param_v = NULL;
 			*focus->data.function.left = arg_type;
 			focus = focus->data.function.right;
 		}
@@ -2760,8 +2915,8 @@ push_capture_binding(scope* const roll, binding_ast binding){
 void
 reduce_aliases(ast* const tree, type_ast* left, type_ast* right){
 	while (left->tag == USER_TYPE || right->tag == USER_TYPE){
-		new_type_ast* left_alias = alias_ast_map_access(&tree->aliases, left->data.user.string);
-		new_type_ast* right_alias = alias_ast_map_access(&tree->aliases, right->data.user.string);
+		new_type_ast* left_alias = alias_ast_map_access(&tree->aliases, left->data.user.user.string);
+		new_type_ast* right_alias = alias_ast_map_access(&tree->aliases, right->data.user.user.string);
 		if (left_alias != NULL){
 			*left = left_alias->type;
 			if (right_alias != NULL){
@@ -2781,7 +2936,7 @@ type_ast
 resolve_alias(ast* const tree, type_ast root, char* err){
 	uint8_t found = 0;
 	while (root.tag == USER_TYPE){
-		new_type_ast* primitive_alias = alias_ast_map_access(&tree->aliases, root.data.user.string);
+		new_type_ast* primitive_alias = alias_ast_map_access(&tree->aliases, root.data.user.user.string);
 		if (primitive_alias == NULL){
 			if (found == 0){
 				snprintf(err, ERROR_BUFFER, " [!] Unknown user type or alias\n");
@@ -2797,7 +2952,7 @@ resolve_alias(ast* const tree, type_ast root, char* err){
 type_ast
 resolve_type_or_alias(ast* const tree, type_ast root, char* err){
 	while (root.tag == USER_TYPE){
-		new_type_ast* primitive_new_type = new_type_ast_map_access(&tree->types, root.data.user.string);
+		new_type_ast* primitive_new_type = new_type_ast_map_access(&tree->types, root.data.user.user.string);
 		if (primitive_new_type != NULL){
 			root = primitive_new_type->type;
 			continue;
@@ -2873,7 +3028,7 @@ type_cmp(type_ast* const a, type_ast* const b){
 		return (a->data.buffer.count != b->data.buffer.count)
 			 + type_cmp(a->data.buffer.base, b->data.buffer.base);
 	case USER_TYPE:
-		return strncmp(a->data.user.string, b->data.user.string, TOKEN_MAX);
+		return strncmp(a->data.user.user.string, b->data.user.user.string, TOKEN_MAX);
 	case STRUCT_TYPE:
 		return struct_cmp(a->data.structure, b->data.structure);
 	case NONE_TYPE:
@@ -3234,7 +3389,7 @@ roll_literal_expression(
 				return expected_type;
 			}
 			if (inner_struct_type.tag != STRUCT_TYPE){
-				snprintf(err, ERROR_BUFFER, " [!] Struct literal cannot be created for non struct type '%s'\n", expected_type.data.user.string);
+				snprintf(err, ERROR_BUFFER, " [!] Struct literal cannot be created for non struct type '%s'\n", expected_type.data.user.user.string);
 				return expected_type;
 			}
 			target_struct = *inner_struct_type.data.structure;
@@ -3999,6 +4154,12 @@ show_lambda(const lambda_ast* const lambda){
 
 void
 show_type(const type_ast* const type){
+	for (uint8_t i = 0;i<type->param_c;++i){
+		show_token(&type->param_v[i]);
+	}
+	if (type->param_c != 0){
+		printf("=> ");
+	}
 	switch (type->tag){
 	case FUNCTION_TYPE:
 		printf("\033[1;36m( \033[0m");
@@ -4022,7 +4183,14 @@ show_type(const type_ast* const type){
 		break;
 	case USER_TYPE:
 		printf("\033[1;36m");
-		show_token(&type->data.user);
+		show_token(&type->data.user.user);
+		if(type->data.user.param_c != 0){
+			printf("( ");
+			for (uint8_t i = 0;i<type->data.user.param_c;++i){
+				show_type(&type->data.user.param_v[i]);
+			}
+			printf(") ");
+		}
 		printf("\033[0m");
 		break;
 	case STRUCT_TYPE:
