@@ -244,6 +244,8 @@ typedef struct type_ast {
 	token* param_v;
 } type_ast;
 
+MAP_DEF(type_ast)
+
 void show_type(const type_ast* const type);
 
 uint8_t type_applies(type_ast* const a, type_ast* const b);
@@ -387,6 +389,14 @@ MAP_DEF(function_ast)
 
 void show_function(const function_ast* const func);
 
+typedef struct mono_entry {
+	function_ast* f;
+	struct mono_entry* next;
+	type_ast_map assoc;
+} mono_entry;
+
+MAP_DEF(mono_entry)
+
 typedef struct ast{
 	token* import_v;
 	function_ast* func_v;
@@ -397,6 +407,7 @@ typedef struct ast{
 	new_type_ast_map types;
 	alias_ast_map aliases;
 	constant_ast_map constants;
+	mono_entry_map monomorphs;
 	uint32_t import_c;	
 	uint32_t func_c;
 	uint32_t new_type_c;
@@ -441,8 +452,14 @@ typedef struct replacement_binding {
 	token replace;
 } replacement_binding;
 
+typedef struct value_binding {
+	type_ast type;
+	token name;
+	struct value_binding* ref;
+} value_binding;
+
 typedef struct scope {
-	binding_ast* binding_stack;
+	value_binding* binding_stack;
 	uint16_t* frame_stack;
 	uint16_t binding_count;
 	uint16_t binding_capacity;
@@ -468,8 +485,8 @@ void push_capture_binding(scope* const roll, binding_ast binding);
 void push_builtins(scope* const roll, pool* const mem);
 void push_frame(scope* const s);
 void pop_frame(scope* const s);
-void push_binding(scope* const s, binding_ast binding);
-void pop_binding(scope* const s);
+
+void push_value_binding(scope* const s, value_binding binding);
 
 void push_label_frame(scope* const s);
 void pop_label_frame(scope* const s);
@@ -482,7 +499,7 @@ void roll_data_layout(ast* const tree, structure_ast* const target, token name, 
 void roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err);
 void roll_struct_type(scope* const roll, ast* const tree, pool* const mem, structure_ast* const target, char* err);
 type_ast roll_expression(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, type_ast expected_type, uint32_t argc, expression_ast* const argv, uint8_t prevent_lift, char* err);
-type_ast* scope_contains(scope* const roll, binding_ast* const binding, uint8_t* needs_capture);
+type_ast* scope_contains(scope* const roll, value_binding* const binding, uint8_t* needs_capture);
 void handle_procedural_statement(scope* const roll, ast* const tree, pool* const mem, expression_ast* const line, type_ast expected_Type, char* const err);
 type_ast roll_statement_expression(scope* const roll, ast* const tree, pool* const mem, statement_ast* const statement, type_ast expected_type, uint8_t as_expression, char* err);
 type_ast roll_literal_expression(scope* const roll, ast* const tree, pool* const mem, literal_ast* const lit, type_ast expected_type, char* err);
@@ -496,5 +513,20 @@ uint64_t type_size_helper(ast* const tree, type_ast target_type, uint64_t rollin
 uint64_t struct_size_helper(ast* const tree, structure_ast target_struct, char* err);
 uint64_t type_size(ast* const tree, type_ast target_type, char* err);
 void lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, binding_ast* captured_bindings, uint16_t total_captures, pool* const mem);
+
+uint8_t type_set_equal(type_ast_map* const assoc, type_ast_map* const candidate, token* const param_v, uint8_t param_c);
+void clash_types(scope* const roll, ast* const tree, pool* const mem, type_ast_map* const assoc, type_ast* const full_type, uint32_t argc, expression_ast* const argv, char* err);
+uint8_t clash_find_diff(type_ast_map* const assoc, type_ast* const outer, type_ast* const left_type, type_ast* const arg_type);
+uint8_t clash_find_diff_structure(type_ast_map* const assoc, type_ast* const outer, structure_ast* const left_struct, structure_ast* const arg_struct);
+function_ast* deep_type_replace(type_ast_map* const assoc, pool* const mem, function_ast* const shell, function_ast* const f, token newname, char* err);
+void deep_type_replace_type(type_ast_map* const assoc, pool* const mem, type_ast* const copy, type_ast* const type, char* err);
+void deep_type_replace_structure(type_ast_map* const assoc, pool* const mem, structure_ast* const copy, structure_ast* const structure, char* err);
+function_ast* deep_type_replace_function(type_ast_map* const assoc, pool* const mem, function_ast* const f, char* err);
+void deep_type_replace_expression(type_ast_map* const assoc, pool* const mem, expression_ast* const copy, expression_ast* const expr, char* err);
+statement_ast deep_type_replace_statement(type_ast_map* const assoc, pool* const mem, statement_ast* const state, char* err);
+literal_ast deep_type_replace_literal(type_ast_map* const assoc, pool* const mem, literal_ast* const lit, char* err);
+void monomorphize(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, expression_ast* const leftmost, type_ast* const full_type, uint32_t index, char* err);
+void deep_copy_type(pool* const mem, type_ast* const copy, type_ast* const type, char* err);
+void deep_copy_structure(pool* const mem, structure_ast* const copy, structure_ast* const structure, char* err);
 
 #endif

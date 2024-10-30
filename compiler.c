@@ -13,6 +13,8 @@ MAP_IMPL(new_type_ast)
 MAP_IMPL(alias_ast)
 MAP_IMPL(constant_ast)
 MAP_IMPL(TOKEN_TYPE_TAG)
+MAP_IMPL(type_ast)
+MAP_IMPL(mono_entry)
 
 uint8_t
 issymbol(char c){
@@ -39,6 +41,7 @@ parse(token* const tokens, pool* const mem, uint64_t token_count, char* string_c
 		.types = new_type_ast_map_init(mem),
 		.aliases = alias_ast_map_init(mem),
 		.constants = constant_ast_map_init(mem),
+		.monomorphs = mono_entry_map_init(mem),
 		.lifted_lambdas=0,
 		.string_buffer=string_content_buffer
 	};
@@ -1639,14 +1642,9 @@ pop_frame(scope* const s){
 }
 
 void
-push_binding(scope* const s, binding_ast binding){
+push_binding(scope* const s, value_binding binding){
 	s->binding_stack[s->binding_count] = binding;
 	s->binding_count += 1;
-}
-
-void
-pop_binding(scope* const s){
-	s->binding_count -= 1;
 }
 
 void
@@ -1745,10 +1743,6 @@ transform_ast(ast* const tree, pool* const mem, char* err){
 	}
 	for (uint32_t i = 0;i<tree->func_c;++i){
 		function_ast* f = &tree->func_v[i];
-		roll_type(&roll, tree, mem, &f->type, err);
-		if (*err != 0){
-			return;
-		}
 		roll_expression(&roll, tree, mem, &f->expression, f->type, 0, NULL, 1, err);
 		if (*err != 0){
 			return;
@@ -1806,8 +1800,6 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
  	1 procedures can just return, thats all, no other anything, just normal functions otherwise
 		procedures dont capture at all, can be invoked with function arguments
 	2 parametric types/ buffers/ pointers
-		0 rewrite type parsing, type definition parsing, function parsing, alias definition parsing
-		1 track parametric type parameters and validate on roll pass
 		2 divide applications into partials and full applications for function calls, create copies of functions and types that are parametric applied, pause to follow through
 		3 need a way to find out if we have an applied version ofthe function or type already so we dont "over-morphize"
 		4 monomorphization of parametric types/functions that take them
@@ -1958,7 +1950,6 @@ roll_expression(
 			if (line->tag == STATEMENT_EXPRESSION) {
 				handle_procedural_statement(roll, tree, mem, line, expected_type, err);
 				if (*err != 0){
-					pop_frame(roll);
 					return expected_type;
 				}
 				continue;
@@ -2017,9 +2008,10 @@ roll_expression(
 		}
 		type_ast desired = expr->data.closure.func->type;
 		expression_ast* equation = &expr->data.closure.func->expression;
-		binding_ast scope_item = {
+		value_binding scope_item = {
 			.type=desired,
-			.name=expr->data.closure.func->name
+			.name=expr->data.closure.func->name,
+			.ref=NULL
 		};
 		uint8_t needs_capture = 0;
 		if (scope_contains(roll, &scope_item, &needs_capture) != NULL){
@@ -2027,23 +2019,20 @@ roll_expression(
 			return expected_type;
 		}
 		if (needs_capture == 1){
-			push_capture_binding(roll, scope_item);
+			binding_ast capture_scope_item = {
+				.type=scope_item.type,
+				.name=scope_item.name
+			};
+			push_capture_binding(roll, capture_scope_item);
 		}
 		push_label_scope(roll);
 		if (expr->data.closure.func->expression.tag == LAMBDA_EXPRESSION){
 			push_binding(roll, scope_item);
 			push_capture_frame(roll, mem);
 			roll_expression(roll, tree, mem, equation, desired, 0, NULL, 1, err);
-		}
-		else{
-			push_capture_frame(roll, mem);
-			roll_expression(roll, tree, mem, equation, desired, 0, NULL, 1, err);
-			push_binding(roll, scope_item);
-		}
-		pop_label_scope(roll);
-		binding_ast* captured_binds = NULL;
-		uint16_t num_caps = pop_capture_frame(roll, &captured_binds);
-		if (expr->data.closure.func->expression.tag == LAMBDA_EXPRESSION){
+			pop_label_scope(roll);
+			binding_ast* captured_binds = NULL;
+			uint16_t num_caps = pop_capture_frame(roll, &captured_binds);
 			lambda_ast* focus_lambda = &expr->data.closure.func->expression.data.lambda;
 			type_ast captured_type = prepend_captures(desired, captured_binds, num_caps, mem);
 			for (uint32_t i = 0;i<focus_lambda->argc;++i){
@@ -2086,7 +2075,14 @@ roll_expression(
 				new_application_expr.data.block.expr_v[repl_size-i] = repl_binding;
 			}
 			expr->data.closure.func->expression = new_application_expr;
+			return expected_type;
 		}
+		push_capture_frame(roll, mem);
+		roll_expression(roll, tree, mem, equation, desired, 0, NULL, 1, err);
+		push_binding(roll, scope_item);
+		binding_ast* captured_binds = NULL;
+		pop_label_scope(roll);
+		pop_capture_frame(roll, &captured_binds);
 		return expected_type;
 
 	case APPLICATION_EXPRESSION:
@@ -2097,6 +2093,9 @@ roll_expression(
 			type_ast only = roll_expression(roll, tree, mem, &expr->data.block.expr_v[0], expected_type, argc, argv, prevent_lift, err);
 			if (*err == 0){
 				expr->data.block.type = only;
+			}
+			if (only.param_c > 0){
+				snprintf(err, ERROR_BUFFER, " [!] Tried to monomorphize with no arguments to apply, no types to deduce with\n");
 			}
 			return only;
 		}
@@ -2119,9 +2118,15 @@ roll_expression(
 				return lefttype;
 			}
 		}
-		type_ast full_type = roll_expression(roll, tree, mem, leftmost, lefttype, expr->data.block.expr_c-1, &expr->data.block.expr_v[index], 0, err);
+		type_ast full_type = roll_expression(roll, tree, mem, leftmost, lefttype, expr->data.block.expr_c-index, &expr->data.block.expr_v[index], 0, err);
 		if (*err != 0){
 			return expected_type;
+		}
+		if (full_type.param_c > 0){
+			monomorphize(roll, tree, mem, expr, leftmost, &full_type, index, err);
+			if (*err != 0){
+				return expected_type;
+			}
 		}
 	   	for (;index<expr->data.block.expr_c;++index){
 			expression_ast* term = &expr->data.block.expr_v[index];
@@ -2158,7 +2163,12 @@ roll_expression(
 			return expr->data.binding.type;
 		}
 		uint8_t needs_capturing = 0;
-		type_ast* bound_type = scope_contains(roll, &expr->data.binding, &needs_capturing);
+		value_binding scope_check = {
+			.type=expr->data.binding.type,
+			.name=expr->data.binding.name,
+			.ref=NULL
+		};
+		type_ast* bound_type = scope_contains(roll, &scope_check, &needs_capturing);
 		if (bound_type == NULL){
 			function_ast* bound_function = function_ast_map_access(&tree->functions, expr->data.binding.name.string);
 			if (bound_function != NULL){
@@ -2479,9 +2489,10 @@ roll_expression(
 					pop_frame(roll);
 					return declared_type;
 				}
-				binding_ast scope_item = {
+				value_binding scope_item = {
 					.type=declared_type,
-					.name=candidate
+					.name=candidate,
+					.ref=NULL
 				};
 				if (scope_contains(roll, &scope_item, NULL) != NULL){
 					pop_frame(roll);
@@ -2528,9 +2539,10 @@ roll_expression(
 				pop_frame(roll);
 				return expected_type;
 			}
-			binding_ast scope_item = {
+			value_binding scope_item = {
 				.type=arg_type,
-				.name=expr->data.lambda.argv[i]
+				.name=expr->data.lambda.argv[i],
+				.ref=NULL
 			};
 			if (scope_contains(roll, &scope_item, NULL) != NULL){
 				snprintf(err, ERROR_BUFFER, " [!] Binding with name '%s' already in scope\n", scope_item.name.string);
@@ -2641,6 +2653,550 @@ roll_expression(
 		snprintf(err, ERROR_BUFFER, " [!] Unexpected expression type\n");
 	}
 	return expected_type;
+}
+
+void
+monomorphize(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, expression_ast* const leftmost, type_ast* const full_type, uint32_t index, char* err){
+	printf("monomorph started\n");
+	if (leftmost->tag != BINDING_EXPRESSION){
+		return;
+	}
+	function_ast* bound_function = function_ast_map_access(&tree->functions, leftmost->data.binding.name.string);
+	if (bound_function == NULL){
+		snprintf(err, ERROR_BUFFER, " [!] Tried to monomorph function binding '%s' which does not exist\n", leftmost->data.binding.name.string);
+		return;
+	}
+	mono_entry* new_morph = pool_request(mem, sizeof(mono_entry));
+	new_morph->f=bound_function;
+	new_morph->next=NULL;
+	new_morph->assoc=type_ast_map_init(mem);
+	clash_types(roll, tree, mem, &new_morph->assoc, full_type, expr->data.block.expr_c-index, &expr->data.block.expr_v[index], err);
+	mono_entry* morph = mono_entry_map_access(&tree->monomorphs, leftmost->data.binding.name.string);
+	function_ast* deep_copy = NULL;
+	while (morph != NULL){
+		type_ast_map* candidate = &morph->assoc;
+		if (type_set_equal(&new_morph->assoc, candidate, full_type->param_v, full_type->param_c) == 1){
+			deep_copy = morph->f;
+			break;
+		}
+		if (morph->next == NULL){
+			break;
+		}
+		morph = morph->next;
+	}
+	if (deep_copy == NULL){
+		token newname = bound_function->name;
+		newname.string = pool_request(mem, TOKEN_MAX);
+		snprintf(newname.string, TOKEN_MAX, ":MONO_%u", tree->lifted_lambdas);
+		tree->lifted_lambdas += 1;
+		function_ast new_deep_copy;
+		deep_type_replace(&new_morph->assoc, mem, &new_deep_copy, bound_function, newname, err);
+		if (*err != 0){
+			return;
+		}
+		tree->func_v[tree->func_c] = new_deep_copy;
+		deep_copy = &tree->func_v[tree->func_c];
+		tree->func_c += 1;
+		new_morph->f = deep_copy;
+		if (morph == NULL){
+			mono_entry_map_insert(&tree->monomorphs, leftmost->data.binding.name.string, new_morph);
+		}
+		else {
+			morph->next = new_morph;
+		}
+		function_ast_map_insert(&tree->functions, newname.string, deep_copy);
+		roll_expression(roll, tree, mem, &deep_copy->expression, deep_copy->type, 0, NULL, 1, err);
+		if (*err != 0){
+			return;
+		}
+	}
+	*full_type = deep_copy->type;
+	leftmost->data.binding.name = deep_copy->name;
+}
+
+uint8_t
+type_set_equal(type_ast_map* const assoc, type_ast_map* const candidate, token* const param_v, uint8_t param_c){
+	for (uint8_t i = 0;i<param_c;++i){
+		type_ast* const a = type_ast_map_access(assoc, param_v[i].string);
+		type_ast* const b = type_ast_map_access(candidate, param_v[i].string);
+		if ((a == NULL || b == NULL)
+		 && (a != b)){
+			return 0;
+		}
+		if (type_cmp(a, b) != 0){
+			return 0;
+		}
+	}
+	return 1;
+}
+
+void
+clash_types(scope* const roll, ast* const tree, pool* const mem, type_ast_map* const assoc, type_ast* const full_type, uint32_t argc, expression_ast* const argv, char* err){
+	type_ast* full = full_type;
+	type_ast infer = {.tag=NONE_TYPE};
+	for (uint32_t i = 0;i<argc;++i){
+		if (full->tag != FUNCTION_TYPE){
+			break;
+		}
+		expression_ast* arg = &argv[i];
+		type_ast arg_type = roll_expression(roll, tree, mem, arg, infer, 0, NULL, 0, err);
+		if (*err != 0){
+			return;
+		}
+		type_ast* left = full->data.function.left;
+		full = full->data.function.right;
+		if (clash_find_diff(assoc, full_type, left, &arg_type) == 0){
+			snprintf(err, ERROR_BUFFER, " [!] Cannot apply type to parametric type\n");
+			return;
+		}
+	}
+}
+
+uint8_t
+clash_find_diff(type_ast_map* const assoc, type_ast* const outer, type_ast* const left_type, type_ast* const arg_type){
+	if (left_type->tag != arg_type->tag){
+		if (left_type->tag == USER_TYPE){
+			type_ast* access = type_ast_map_access(assoc, left_type->data.user.user.string);
+			if (access != NULL){
+				if (type_cmp(access, arg_type) == 0){
+					return 1;
+				}
+				return 0;
+			}
+			for (uint8_t i = 0;i<outer->param_c;++i){
+				if (strncmp(left_type->data.user.user.string, outer->param_v[i].string, TOKEN_MAX) == 0){
+					type_ast* entry_copy = pool_request(assoc->mem, sizeof(type_ast));
+					char temp_err[ERROR_BUFFER] = "\0";
+					deep_copy_type(assoc->mem, entry_copy, arg_type, temp_err);
+					if (*temp_err != 0){
+						return 0;
+					}
+					type_ast_map_insert(assoc, left_type->data.user.user.string, entry_copy);
+					return 1;
+				}
+			}
+			return 0;
+		}
+		return 0;
+	}
+	switch (left_type->tag){
+	case FUNCTION_TYPE:
+		return clash_find_diff(assoc, outer, left_type->data.function.left, arg_type->data.function.left)
+			 * clash_find_diff(assoc, outer, left_type->data.function.right, arg_type->data.function.right);
+	case PROCEDURE_TYPE:
+	case PRIMITIVE_TYPE:
+		return left_type->data.primitive == arg_type->data.primitive;
+	case POINTER_TYPE:
+		return clash_find_diff(assoc, outer, left_type->data.pointer, arg_type->data.pointer);
+	case BUFFER_TYPE:
+		return (left_type->data.buffer.count == arg_type->data.buffer.count)
+			&& clash_find_diff(assoc, outer, left_type->data.buffer.base, arg_type->data.buffer.base);
+	case USER_TYPE:
+		if (strncmp(left_type->data.user.user.string, arg_type->data.user.user.string, TOKEN_MAX) != 0){
+			type_ast* access = type_ast_map_access(assoc, left_type->data.user.user.string);
+			if (access != NULL){
+				if (type_cmp(access, arg_type) == 0){
+					return 1;
+				}
+				return 0;
+			}
+			for (uint8_t i = 0;i<outer->param_c;++i){
+				if (strncmp(left_type->data.user.user.string, outer->param_v[i].string, TOKEN_MAX) == 0){
+					type_ast_map_insert(assoc, left_type->data.user.user.string, arg_type);
+					return 1;
+				}
+			}
+			return 0;
+		}
+		if (left_type->data.user.param_c != arg_type->data.user.param_c){
+			return 0;
+		}
+		for (uint8_t i = 0;i<left_type->data.user.param_c;++i){
+			if (clash_find_diff(assoc, outer, &left_type->data.user.param_v[i], &arg_type->data.user.param_v[i]) == 0){
+				return 0;
+			}
+		}
+		return 1;	
+	case STRUCT_TYPE:
+		return clash_find_diff_structure(assoc, outer, left_type->data.structure, arg_type->data.structure);
+	case NONE_TYPE:
+	case INTERNAL_ANY_TYPE:
+		return 1;
+	default:
+	}
+	return 0;
+}
+
+uint8_t
+clash_find_diff_structure(type_ast_map* const assoc, type_ast* const outer, structure_ast* const left_struct, structure_ast* const arg_struct){
+	if ((left_struct->binding_c != arg_struct->binding_c)
+	 || (left_struct->union_c != arg_struct->union_c)){
+		return 0;
+	}
+	for (uint32_t i = 0;i<left_struct->binding_c;++i){
+		if (clash_find_diff(assoc, outer, &left_struct->binding_v[i].type, &arg_struct->binding_v[i].type) == 0){
+			return 0;
+		}
+	}
+	for (uint32_t i = 0;i<left_struct->union_c;++i){
+		if (clash_find_diff_structure(assoc, outer, &left_struct->union_v[i], &arg_struct->union_v[i]) == 0){
+			return 0;
+		}
+	}
+	return 1;
+}
+
+function_ast*
+deep_type_replace(type_ast_map* const assoc, pool* const mem, function_ast* const shell, function_ast* const f, token newname, char* err){
+	shell->name = newname;
+	shell->enclosing = f->enclosing;
+	deep_type_replace_type(assoc, mem, &shell->type, &f->type, err);
+	if (*err != 0){
+		return shell;
+	}
+	deep_type_replace_expression(assoc, mem, &shell->expression, &f->expression, err);
+	return shell;
+}
+
+void
+deep_type_replace_type(type_ast_map* const assoc, pool* const mem, type_ast* const copy, type_ast* const type, char* err){
+	copy->tag = type->tag;
+	copy->param_c = type->param_c;
+	copy->param_v = type->param_v;
+	switch (type->tag){
+	case FUNCTION_TYPE:
+		copy->data.function.left = pool_request(mem, sizeof(type_ast));
+		deep_type_replace_type(assoc, mem, copy->data.function.left, type->data.function.left, err);
+		if (*err != 0){
+			return;
+		}
+		copy->data.function.right = pool_request(mem, sizeof(type_ast));
+		deep_type_replace_type(assoc, mem, copy->data.function.right, type->data.function.right, err);
+		return;
+	case PRIMITIVE_TYPE:
+		copy->data.primitive = type->data.primitive;
+		return;
+	case BUFFER_TYPE:
+		copy->data.buffer.count = type->data.buffer.count;
+		copy->data.buffer.constant = type->data.buffer.constant;
+		copy->data.buffer.const_binding = type->data.buffer.const_binding;
+		copy->data.buffer.base = pool_request(mem, sizeof(type_ast));
+		deep_type_replace_type(assoc, mem, copy->data.buffer.base, type->data.buffer.base, err);
+		return;
+	case USER_TYPE:
+		type_ast* access = type_ast_map_access(assoc, type->data.user.user.string);
+		if (access != NULL){
+			deep_copy_type(mem, copy, access, err);
+			return;
+		}
+		copy->data.user.user = type->data.user.user;
+		if (type->data.user.param_c > 0){
+			copy->data.user.param_v = pool_request(mem, sizeof(type_ast)*type->data.user.param_c);
+			copy->data.user.param_c = type->data.user.param_c;
+			for (uint8_t i = 0;i<type->data.user.param_c;++i){
+				deep_type_replace_type(assoc, mem, &copy->data.user.param_v[i], &type->data.user.param_v[i], err);
+				if (*err != 0){
+					return;
+				}
+			}
+		}
+		return;
+	case STRUCT_TYPE:
+		copy->data.structure = pool_request(mem, sizeof(structure_ast));
+		deep_type_replace_structure(assoc, mem, copy->data.structure, type->data.structure, err);
+		return;
+	case POINTER_TYPE:
+	case PROCEDURE_TYPE:
+		copy->data.pointer = pool_request(mem, sizeof(type_ast));
+		deep_type_replace_type(assoc, mem, copy->data.pointer, type->data.pointer, err);
+		return;
+	case NONE_TYPE:
+	case INTERNAL_ANY_TYPE:
+		return;
+	default:
+		snprintf(err, ERROR_BUFFER, " [!] Unknown type in deep replace\n");
+	}
+}
+
+void
+deep_copy_type(pool* const mem, type_ast* const copy, type_ast* const type, char* err){
+	copy->tag = type->tag;
+	copy->param_c = type->param_c;
+	copy->param_v = type->param_v;
+	switch (type->tag){
+	case FUNCTION_TYPE:
+		copy->data.function.left = pool_request(mem, sizeof(type_ast));
+		deep_copy_type(mem, copy->data.function.left, type->data.function.left, err);
+		if (*err != 0){
+			return;
+		}
+		copy->data.function.right = pool_request(mem, sizeof(type_ast));
+		deep_copy_type(mem, copy->data.function.right, type->data.function.right, err);
+		return;
+	case PRIMITIVE_TYPE:
+		copy->data.primitive = type->data.primitive;
+		return;
+	case BUFFER_TYPE:
+		copy->data.buffer.count = type->data.buffer.count;
+		copy->data.buffer.constant = type->data.buffer.constant;
+		copy->data.buffer.const_binding = type->data.buffer.const_binding;
+		copy->data.buffer.base = pool_request(mem, sizeof(type_ast));
+		deep_copy_type(mem, copy->data.buffer.base, type->data.buffer.base, err);
+		return;
+	case USER_TYPE:
+		copy->data.user.user = type->data.user.user;
+		copy->data.user.user.string = pool_request(mem, type->data.user.user.len);
+		strncpy(copy->data.user.user.string, type->data.user.user.string, copy->data.user.user.len);
+		if (type->data.user.param_c > 0){
+			copy->data.user.param_v = pool_request(mem, sizeof(type_ast)*type->data.user.param_c);
+			copy->data.user.param_c = type->data.user.param_c;
+			for (uint8_t i = 0;i<type->data.user.param_c;++i){
+				deep_copy_type(mem, &copy->data.user.param_v[i], &type->data.user.param_v[i], err);
+				if (*err != 0){
+					return;
+				}
+			}
+		}
+		return;
+	case STRUCT_TYPE:
+		copy->data.structure = pool_request(mem, sizeof(structure_ast));
+		deep_copy_structure(mem, copy->data.structure, type->data.structure, err);
+		return;
+	case POINTER_TYPE:
+	case PROCEDURE_TYPE:
+		copy->data.pointer = pool_request(mem, sizeof(type_ast));
+		deep_copy_type(mem, copy->data.pointer, type->data.pointer, err);
+		return;
+	case NONE_TYPE:
+	case INTERNAL_ANY_TYPE:
+		return;
+	default:
+		snprintf(err, ERROR_BUFFER, " [!] Unknown type in deep replace\n");
+	}
+}
+
+void
+deep_type_replace_structure(type_ast_map* const assoc, pool* const mem, structure_ast* const copy, structure_ast* const structure, char* err){
+	copy->binding_c = structure->binding_c;
+	copy->binding_v = pool_request(mem, sizeof(binding_ast)*copy->binding_c);
+	for (uint32_t i = 0;i<copy->binding_c;++i){
+		deep_type_replace_type(assoc, mem, &copy->binding_v[i].type, &structure->binding_v[i].type, err);
+		if (*err != 0){
+			return;
+		}
+		copy->binding_v[i].name = structure->binding_v[i].name;
+	}
+	copy->encoding = structure->encoding;
+	copy->union_c = structure->union_c;
+	copy->tag_v = structure->tag_v;
+	copy->union_v = pool_request(mem, sizeof(structure_ast)*copy->union_c);
+	for (uint32_t i = 0;i<copy->union_c;++i){
+		deep_type_replace_structure(assoc, mem, &copy->union_v[i], &structure->union_v[i], err);
+		if (*err != 0){
+			return;
+		}
+	}
+}
+
+void
+deep_copy_structure(pool* const mem, structure_ast* const copy, structure_ast* const structure, char* err){
+	copy->binding_c = structure->binding_c;
+	copy->binding_v = pool_request(mem, sizeof(binding_ast)*copy->binding_c);
+	for (uint32_t i = 0;i<copy->binding_c;++i){
+		deep_copy_type(mem, &copy->binding_v[i].type, &structure->binding_v[i].type, err);
+		if (*err != 0){
+			return;
+		}
+		copy->binding_v[i].name = structure->binding_v[i].name;
+	}
+	copy->encoding = structure->encoding;
+	copy->union_c = structure->union_c;
+	copy->tag_v = structure->tag_v;
+	copy->union_v = pool_request(mem, sizeof(structure_ast)*copy->union_c);
+	for (uint32_t i = 0;i<copy->union_c;++i){
+		deep_copy_structure(mem, &copy->union_v[i], &structure->union_v[i], err);
+		if (*err != 0){
+			return;
+		}
+	}
+}
+
+function_ast*
+deep_type_replace_function(type_ast_map* const assoc, pool* const mem, function_ast* const f, char* err){
+	function_ast* copy = pool_request(mem, sizeof(function_ast));
+	copy->name = f->name;
+	copy->enclosing = f->enclosing;
+	deep_type_replace_type(assoc, mem, &copy->type, &f->type, err);
+	if (*err != 0){
+		return copy;
+	}
+	deep_type_replace_expression(assoc, mem, &copy->expression, &f->expression, err);
+	return copy;
+}
+
+void
+deep_type_replace_expression(type_ast_map* const assoc, pool* const mem, expression_ast* const copy, expression_ast* const expr, char* err){
+	copy->tag = expr->tag;
+	switch (expr->tag){
+	case BLOCK_EXPRESSION:
+	case APPLICATION_EXPRESSION:
+		deep_type_replace_type(assoc, mem, &copy->data.block.type, &expr->data.block.type, err);
+		if (*err != 0){
+			return;
+		}
+		copy->data.block.expr_v = pool_request(mem, sizeof(expression_ast)*expr->data.block.expr_c);
+		copy->data.block.expr_c = expr->data.block.expr_c;
+		for (uint32_t i = 0;i<copy->data.block.expr_c;++i){
+			deep_type_replace_expression(assoc, mem, &copy->data.block.expr_v[i], &expr->data.block.expr_v[i], err);
+			if (*err != 0){
+				return;
+			}
+		}
+		return;
+	case CLOSURE_EXPRESSION:
+		copy->data.closure.capture_v = pool_request(mem, sizeof(binding_ast)*expr->data.closure.capture_c);
+		copy->data.closure.func = deep_type_replace_function(assoc, mem, expr->data.closure.func, err);
+		copy->data.closure.capture_c = expr->data.closure.capture_c;
+		return;
+	case STATEMENT_EXPRESSION:
+		copy->data.statement = deep_type_replace_statement(assoc, mem, &copy->data.statement, err);
+		return;
+	case BINDING_EXPRESSION:
+	case VALUE_EXPRESSION:
+		copy->data.binding = expr->data.binding;
+		deep_type_replace_type(assoc, mem, &copy->data.binding.type, &expr->data.binding.type, err);
+		return;
+	case LITERAL_EXPRESSION:
+		copy->data.literal = deep_type_replace_literal(assoc, mem, &expr->data.literal, err);
+		return;
+	case LAMBDA_EXPRESSION:
+		copy->data.lambda.argv=expr->data.lambda.argv;
+		copy->data.lambda.expression = pool_request(mem, sizeof(expression_ast));
+		copy->data.lambda.argc=expr->data.lambda.argc;
+		deep_type_replace_expression(assoc, mem, copy->data.lambda.expression, expr->data.lambda.expression, err);
+		if (*err != 0){
+			return;
+		}
+		deep_type_replace_type(assoc, mem, &copy->data.lambda.type, &expr->data.lambda.type, err);
+		return;
+	case DEREF_EXPRESSION:
+	case ACCESS_EXPRESSION:
+	case RETURN_EXPRESSION:
+	case REF_EXPRESSION:
+		copy->data.deref = pool_request(mem, sizeof(expression_ast));
+		deep_type_replace_expression(assoc, mem, copy->data.deref, expr->data.deref, err);
+		return;
+	case CAST_EXPRESSION:
+		copy->data.cast.target = pool_request(mem, sizeof(expression_ast));
+		deep_type_replace_expression(assoc, mem, copy->data.cast.target, expr->data.cast.target, err);
+		if (*err != 0){
+			return;
+		}
+		deep_type_replace_type(assoc, mem, &copy->data.cast.type, &expr->data.cast.type, err);
+		return;
+	case SIZEOF_EXPRESSION:
+		deep_type_replace_type(assoc, mem, &copy->data.size_of.type, &expr->data.size_of.type, err);
+		if (*err != 0){
+			return;
+		}
+		copy->data.size_of.target = pool_request(mem, sizeof(expression_ast));
+		deep_type_replace_expression(assoc, mem, copy->data.size_of.target, expr->data.size_of.target, err);
+		if (*err != 0){
+			return;
+		}
+		copy->data.size_of.size = expr->data.size_of.size;
+		return;
+	case NOP_EXPRESSION:
+		return;
+	default:
+		snprintf(err, ERROR_BUFFER, " [!] Unknown expression type form deep copy type fill\n");
+	}
+	return;
+}
+
+statement_ast
+deep_type_replace_statement(type_ast_map* const assoc, pool* const mem, statement_ast* const state, char* err){
+	statement_ast copy;
+	copy.tag = state->tag;
+	deep_type_replace_type(assoc, mem, &copy.type, &state->type, err);
+	if (*err != 0){
+		return copy;
+	}
+	copy.labeled = state->labeled;
+	copy.label = state->label;
+	switch (state->tag){
+	case IF_STATEMENT:
+		copy.data.if_statement.predicate = pool_request(mem, sizeof(expression_ast));
+		copy.data.if_statement.branch = pool_request(mem, sizeof(expression_ast));
+		deep_type_replace_expression(assoc, mem, copy.data.if_statement.predicate, state->data.if_statement.predicate, err);
+		if (*err != 0){
+			return copy;
+		}
+		deep_type_replace_expression(assoc, mem, copy.data.if_statement.branch, state->data.if_statement.branch, err);
+		if (*err != 0){
+			return copy;
+		}
+		if (state->data.if_statement.alternate != NULL){
+		copy.data.if_statement.alternate = pool_request(mem, sizeof(expression_ast));
+			deep_type_replace_expression(assoc, mem, copy.data.if_statement.alternate, state->data.if_statement.alternate, err);
+		}
+		return copy;
+	case FOR_STATEMENT:
+		copy.data.for_statement.start = pool_request(mem, sizeof(expression_ast));
+		copy.data.for_statement.end = pool_request(mem, sizeof(expression_ast));
+		copy.data.for_statement.inc = pool_request(mem, sizeof(expression_ast));
+		copy.data.for_statement.procedure = pool_request(mem, sizeof(expression_ast));
+		deep_type_replace_expression(assoc, mem, copy.data.for_statement.start, state->data.for_statement.start, err);
+		if (*err != 0){
+			return copy;
+		}
+		deep_type_replace_expression(assoc, mem, copy.data.for_statement.end, state->data.for_statement.end, err);
+		if (*err != 0){
+			return copy;
+		}
+		deep_type_replace_expression(assoc, mem, copy.data.for_statement.inc, state->data.for_statement.inc, err);
+		if (*err != 0){
+			return copy;
+		}
+		deep_type_replace_expression(assoc, mem, copy.data.for_statement.procedure, state->data.for_statement.procedure, err);
+		return copy;
+	case BREAK_STATEMENT:
+	case CONTINUE_STATEMENT:
+		return copy;
+	default:
+		snprintf(err, ERROR_BUFFER, " [!] Unknown statement type in deep type replace\n");
+	}
+	return copy;
+}
+
+literal_ast
+deep_type_replace_literal(type_ast_map* const assoc, pool* const mem, literal_ast* const lit, char* err){
+	literal_ast copy;
+	copy.tag = lit->tag;
+	deep_type_replace_type(assoc, mem, &copy.type, &lit->type, err);
+	if (*err != 0){
+		return copy;
+	}
+	switch (lit->tag){
+	case STRING_LITERAL:
+		copy.data.string.content = lit->data.string.content;
+		copy.data.string.length = lit->data.string.length;
+		return copy;
+	case ARRAY_LITERAL:
+	case STRUCT_LITERAL:
+		copy.data.array.member_v = pool_request(mem, sizeof(expression_ast)*lit->data.array.member_c);
+		copy.data.array.member_c = lit->data.array.member_c;
+		for (uint32_t i = 0;i<copy.data.array.member_c;++i){
+			deep_type_replace_expression(assoc, mem, &copy.data.array.member_v[i], &lit->data.array.member_v[i], err);
+			if (*err != 0){
+				return copy;
+			}
+		}
+		return copy;
+	default:
+		snprintf(err, ERROR_BUFFER, " [!] Unknown literal type in deep type replace\n");
+	}
+	return copy;
 }
 
 uint8_t
@@ -3098,7 +3654,7 @@ struct_cmp(structure_ast* const a, structure_ast* const b){
 }
 
 type_ast*
-scope_contains(scope* const roll, binding_ast* const binding, uint8_t* needs_capturing){
+scope_contains(scope* const roll, value_binding* const binding, uint8_t* needs_capturing){
 	for (uint16_t i = 0;i<roll->binding_count;++i){
 		uint16_t index = roll->binding_count - (i+1);
 		if (strncmp(roll->binding_stack[index].name.string, binding->name.string, TOKEN_MAX) == 0){
@@ -3965,6 +4521,8 @@ compile_cstr(pool* const mem, uint64_t read_bytes){
 		fprintf(stderr, "Could not compile\n");
 		fprintf(stderr, err);
 		show_ast(&tree);
+		fprintf(stderr, "Could not compile\n");
+		fprintf(stderr, err);
 		pool_dealloc(mem);
 		return 1;
 	}
@@ -3977,9 +4535,10 @@ compile_cstr(pool* const mem, uint64_t read_bytes){
 
 void
 binary_int_builtin(scope* const roll, pool* const mem, token name){
-	binding_ast builtin = {
+	value_binding builtin = {
 		.name=name,
-		.type={.tag=FUNCTION_TYPE}
+		.type={.tag=FUNCTION_TYPE},
+		.ref=NULL
 	};
 	builtin.type.data.function.left = pool_request(mem, sizeof(type_ast));
 	builtin.type.data.function.right = pool_request(mem, sizeof(type_ast));
@@ -3994,9 +4553,10 @@ binary_int_builtin(scope* const roll, pool* const mem, token name){
 
 void
 binary_float_builtin(scope* const roll, pool* const mem, token name){
-	binding_ast builtin = {
+	value_binding builtin = {
 		.name=name,
-		.type={.tag=FUNCTION_TYPE}
+		.type={.tag=FUNCTION_TYPE},
+		.ref=NULL
 	};
 	builtin.type.data.function.left = pool_request(mem, sizeof(type_ast));
 	builtin.type.data.function.right = pool_request(mem, sizeof(type_ast));
@@ -4011,9 +4571,10 @@ binary_float_builtin(scope* const roll, pool* const mem, token name){
 
 void
 unary_int_builtin(scope* const roll, pool* const mem, token name){
-	binding_ast builtin = {
+	value_binding builtin = {
 		.name=name,
-		.type={.tag=FUNCTION_TYPE}
+		.type={.tag=FUNCTION_TYPE},
+		.ref=NULL
 	};
 	builtin.type.data.function.left = pool_request(mem, sizeof(type_ast));
 	builtin.type.data.function.right = pool_request(mem, sizeof(type_ast));
@@ -4055,11 +4616,12 @@ push_builtins(scope* const roll, pool* const mem){
 	unary_int_builtin(roll, mem, (token){ .len=1, .string="~", .type=TOKEN_BIT_COMP });
 	unary_int_builtin(roll, mem, (token){ .len=1, .string="!", .type=TOKEN_BOOL_NOT });
 	//alloc builtin
-	binding_ast alloc = {
+	value_binding alloc = {
 		.name.len=strlen("alloc"),
 		.name.string="alloc",
 		.name.type=TOKEN_IDENTIFIER,
-		.type={.tag=FUNCTION_TYPE}
+		.type={.tag=FUNCTION_TYPE},
+		.ref=NULL
 	};
 	alloc.type.data.function.left = pool_request(mem, sizeof(type_ast));
 	alloc.type.data.function.right = pool_request(mem, sizeof(type_ast));
@@ -4072,11 +4634,12 @@ push_builtins(scope* const roll, pool* const mem){
 	*alloc.type.data.function.right->data.pointer = bytes;
 	push_binding(roll, alloc);
 	//free builtin
-	binding_ast dealloc = {
+	value_binding dealloc = {
 		.name.len=strlen("free"),
 		.name.string="free",
 		.name.type=TOKEN_IDENTIFIER,
-		.type={.tag=FUNCTION_TYPE}
+		.type={.tag=FUNCTION_TYPE},
+		.ref=NULL
 	};
 	dealloc.type.data.function.left = pool_request(mem, sizeof(type_ast));
 	dealloc.type.data.function.right = pool_request(mem, sizeof(type_ast));

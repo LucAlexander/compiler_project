@@ -28,7 +28,7 @@ typedef struct type##_map_bucket{\
 } type##_map_bucket;\
 \
 typedef struct type##_map{\
-	pool* const mem;\
+	pool* mem;\
 	type##_map_bucket buckets[MAP_SIZE];\
 } type##_map;\
 \
