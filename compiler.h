@@ -395,7 +395,15 @@ typedef struct mono_entry {
 	type_ast_map assoc;
 } mono_entry;
 
+typedef struct mono_entry_structure {
+	token name;
+	type_ast* t;
+	struct mono_entry_structure* next;
+	type_ast_map assoc;
+} mono_entry_structure;
+
 MAP_DEF(mono_entry)
+MAP_DEF(mono_entry_structure)
 
 typedef struct ast{
 	token* import_v;
@@ -408,6 +416,7 @@ typedef struct ast{
 	alias_ast_map aliases;
 	constant_ast_map constants;
 	mono_entry_map monomorphs;
+	mono_entry_structure_map monomorph_structures;
 	uint32_t import_c;	
 	uint32_t func_c;
 	uint32_t new_type_c;
@@ -526,6 +535,7 @@ void deep_type_replace_expression(type_ast_map* const assoc, pool* const mem, ex
 statement_ast deep_type_replace_statement(type_ast_map* const assoc, pool* const mem, statement_ast* const state, char* err);
 literal_ast deep_type_replace_literal(type_ast_map* const assoc, pool* const mem, literal_ast* const lit, char* err);
 void monomorphize(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, expression_ast* const leftmost, type_ast* const full_type, uint32_t index, char* err);
+void monomorphize_structure(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err);
 void deep_copy_type(pool* const mem, type_ast* const copy, type_ast* const type, char* err);
 void deep_copy_structure(pool* const mem, structure_ast* const copy, structure_ast* const structure, char* err);
 

@@ -15,6 +15,7 @@ MAP_IMPL(constant_ast)
 MAP_IMPL(TOKEN_TYPE_TAG)
 MAP_IMPL(type_ast)
 MAP_IMPL(mono_entry)
+MAP_IMPL(mono_entry_structure)
 
 uint8_t
 issymbol(char c){
@@ -42,6 +43,7 @@ parse(token* const tokens, pool* const mem, uint64_t token_count, char* string_c
 		.aliases = alias_ast_map_init(mem),
 		.constants = constant_ast_map_init(mem),
 		.monomorphs = mono_entry_map_init(mem),
+		.monomorph_structures = mono_entry_structure_map_init(mem),
 		.lifted_lambdas=0,
 		.string_buffer=string_content_buffer
 	};
@@ -1735,6 +1737,9 @@ transform_ast(ast* const tree, pool* const mem, char* err){
 		if (t->type.tag != STRUCT_TYPE){
 			continue;
 		}
+		if (t->type.param_c > 0){
+			continue;
+		}
 		structure_ast_map_insert(&touched_structs, t->name.string, t->type.data.structure);
 		roll_data_layout(tree, t->type.data.structure, t->name, &touched_structs, err);
 		if (*err != 0){
@@ -1743,6 +1748,9 @@ transform_ast(ast* const tree, pool* const mem, char* err){
 	}
 	for (uint32_t i = 0;i<tree->func_c;++i){
 		function_ast* f = &tree->func_v[i];
+		if (f->type.param_c > 0){
+			continue;
+		}
 		roll_expression(&roll, tree, mem, &f->expression, f->type, 0, NULL, 1, err);
 		if (*err != 0){
 			return;
@@ -1878,12 +1886,16 @@ roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const t
 		roll_struct_type(roll, tree, mem, target->data.structure, err);
 		return;
 	case USER_TYPE:
-		for (uint8_t i = 0;i<target->data.user.param_c;++i){
-			roll_type(roll, tree, mem, &target->data.user.param_v[i], err);
-			if (*err != 0){
-				return;
+		if (target->data.user.param_c > 0){
+			for (uint8_t i = 0;i<target->data.user.param_c;++i){
+				roll_type(roll, tree, mem, &target->data.user.param_v[i], err);
+				if (*err != 0){
+					return;
+				}
 			}
+			monomorphize_structure(roll, tree, mem, target, err);
 		}
+		return;
 	case PRIMITIVE_TYPE:
 	case NONE_TYPE:
 		return;
@@ -1891,6 +1903,96 @@ roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const t
 		snprintf(err, ERROR_BUFFER, " [!] Unexpected type tag\n");
 		return;
 	}
+}
+
+void
+monomorphize_structure(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err){
+	printf("mm structure\n");
+	type_ast* inner_resolve = NULL;
+	new_type_ast* is_type = new_type_ast_map_access(&tree->types, target->data.user.user.string);
+	if (is_type == NULL){
+		alias_ast* is_alias = alias_ast_map_access(&tree->aliases, target->data.user.user.string);
+		if (is_alias == NULL){
+			snprintf(err, ERROR_BUFFER, " [!] Parametrict user type was neither defined type or alias\n");
+			return;
+		}
+		inner_resolve = &is_alias->type;
+	}
+	else{
+		inner_resolve = &is_type->type;
+	}
+	mono_entry_structure* new_morph = pool_request(mem, sizeof(mono_entry_structure));
+	new_morph->t = NULL;
+	new_morph->next = NULL;
+	new_morph->assoc = type_ast_map_init(mem);
+	for (uint8_t i = 0;i<inner_resolve->param_c;++i){
+		type_ast_map_insert(&new_morph->assoc, inner_resolve->param_v[i].string, &target->data.user.param_v[i]);
+	}
+	mono_entry_structure* morph = mono_entry_structure_map_access(&tree->monomorph_structures, target->data.user.user.string);
+	token name_copy;
+	type_ast* deep_copy = NULL;
+	while (morph != NULL){
+		type_ast_map* candidate = &morph->assoc;
+		if (type_set_equal(&new_morph->assoc, candidate, inner_resolve->param_v, inner_resolve->param_c) == 1){
+			deep_copy = morph->t;
+			name_copy = morph->name;
+			break;
+		}
+		if (morph->next == NULL){
+			break;
+		}
+		morph = morph->next;
+	}
+	if (deep_copy == NULL){
+		token newname = target->data.user.user;
+		newname.string = pool_request(mem, TOKEN_MAX);
+		snprintf(newname.string, TOKEN_MAX, ":STRUCT_MONO_%u", tree->lifted_lambdas);
+		tree->lifted_lambdas += 1;
+		type_ast new_deep_copy;
+		deep_type_replace_type(&new_morph->assoc, mem, &new_deep_copy, inner_resolve, err);
+		if (*err != 0){
+			return;
+		}
+		new_deep_copy.param_c = 0;
+		new_deep_copy.param_v = NULL;
+		new_morph->name = newname;
+		if (is_type == NULL){
+			alias_ast proxy_alias = {
+				.name=newname,
+				.type=new_deep_copy
+			};
+			tree->alias_v[tree->alias_c] = proxy_alias;
+			deep_copy = &tree->alias_v[tree->alias_c].type;
+			new_morph->t = deep_copy;
+			alias_ast_map_insert(&tree->aliases, tree->alias_v[tree->alias_c].name.string, &tree->alias_v[tree->alias_c]);
+			tree->alias_c += 1;
+		}
+		else {
+			 new_type_ast proxy_type = {
+				.name=newname,
+				.type=new_deep_copy
+			};
+			tree->new_type_v[tree->new_type_c] = proxy_type;
+			deep_copy = &tree->new_type_v[tree->new_type_c].type;
+			new_morph->t = deep_copy;
+			new_type_ast_map_insert(&tree->types, tree->new_type_v[tree->new_type_c].name.string, &tree->new_type_v[tree->new_type_c]);
+			tree->new_type_c += 1;
+		}
+		if (morph == NULL){
+			mono_entry_structure_map_insert(&tree->monomorph_structures, target->data.user.user.string, new_morph);
+		}
+		else{
+			morph->next = new_morph;
+		}
+		roll_type(roll, tree, mem, deep_copy, err);
+		if (*err != 0){
+			return;
+		}
+		name_copy = new_morph->name;
+	}
+	target->data.user.user = name_copy;
+	target->data.user.param_v = NULL;
+	target->data.user.param_c = 0;
 }
 
 void
@@ -2030,6 +2132,9 @@ roll_expression(
 			push_binding(roll, scope_item);
 			push_capture_frame(roll, mem);
 			roll_expression(roll, tree, mem, equation, desired, 0, NULL, 1, err);
+			if (*err != 0){
+				return expected_type;
+			}
 			pop_label_scope(roll);
 			binding_ast* captured_binds = NULL;
 			uint16_t num_caps = pop_capture_frame(roll, &captured_binds);
@@ -2095,6 +2200,7 @@ roll_expression(
 				expr->data.block.type = only;
 			}
 			if (only.param_c > 0){
+				//TODO descend with expected_type as arg type expectation
 				snprintf(err, ERROR_BUFFER, " [!] Tried to monomorphize with no arguments to apply, no types to deduce with\n");
 			}
 			return only;
@@ -2657,7 +2763,6 @@ roll_expression(
 
 void
 monomorphize(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, expression_ast* const leftmost, type_ast* const full_type, uint32_t index, char* err){
-	printf("monomorph started\n");
 	if (leftmost->tag != BINDING_EXPRESSION){
 		return;
 	}
@@ -2688,12 +2793,14 @@ monomorphize(scope* const roll, ast* const tree, pool* const mem, expression_ast
 		token newname = bound_function->name;
 		newname.string = pool_request(mem, TOKEN_MAX);
 		snprintf(newname.string, TOKEN_MAX, ":MONO_%u", tree->lifted_lambdas);
-		tree->lifted_lambdas += 1;
+tree->lifted_lambdas += 1;
 		function_ast new_deep_copy;
 		deep_type_replace(&new_morph->assoc, mem, &new_deep_copy, bound_function, newname, err);
 		if (*err != 0){
 			return;
 		}
+		new_deep_copy.type.param_c = 0;
+		new_deep_copy.type.param_v = NULL;
 		tree->func_v[tree->func_c] = new_deep_copy;
 		deep_copy = &tree->func_v[tree->func_c];
 		tree->func_c += 1;
