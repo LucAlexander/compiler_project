@@ -525,8 +525,8 @@ void lift_lambda(ast* const tree, expression_ast* expr, type_ast captured_type, 
 
 uint8_t type_set_equal(type_ast_map* const assoc, type_ast_map* const candidate, token* const param_v, uint8_t param_c);
 void clash_types(scope* const roll, ast* const tree, pool* const mem, type_ast_map* const assoc, type_ast* const full_type, uint32_t argc, expression_ast* const argv, char* err);
-uint8_t clash_find_diff(type_ast_map* const assoc, type_ast* const outer, type_ast* const left_type, type_ast* const arg_type);
-uint8_t clash_find_diff_structure(type_ast_map* const assoc, type_ast* const outer, structure_ast* const left_struct, structure_ast* const arg_struct);
+uint8_t clash_find_diff(scope* const roll, ast* const tree, pool* const mem, type_ast_map* const assoc, type_ast* const outer, type_ast* const left_type, type_ast* const arg_type, char* err);
+uint8_t clash_find_diff_structure(scope* const roll, ast* const tree, pool* const mem, type_ast_map* const assoc, type_ast* const outer, structure_ast* const left_struct, structure_ast* const arg_struct, char* err);
 function_ast* deep_type_replace(type_ast_map* const assoc, pool* const mem, function_ast* const shell, function_ast* const f, token newname, char* err);
 void deep_type_replace_type(type_ast_map* const assoc, pool* const mem, type_ast* const copy, type_ast* const type, char* err);
 void deep_type_replace_structure(type_ast_map* const assoc, pool* const mem, structure_ast* const copy, structure_ast* const structure, char* err);
@@ -538,5 +538,7 @@ void monomorphize(scope* const roll, ast* const tree, pool* const mem, expressio
 void monomorphize_structure(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err);
 void deep_copy_type(pool* const mem, type_ast* const copy, type_ast* const type, char* err);
 void deep_copy_structure(pool* const mem, structure_ast* const copy, structure_ast* const structure, char* err);
+void clash_validate_return_struct(scope* const roll, ast* const tree, pool* const mem, type_ast_map* const assoc, structure_ast* const ret, char* err);
+void clash_validate_return_type(scope* const roll, ast* const tree, pool* const mem, type_ast_map* const assoc, type_ast* const ret, char* err);
 
 #endif

@@ -1943,7 +1943,7 @@ monomorphize_structure(scope* const roll, ast* const tree, pool* const mem, type
 		}
 		morph = morph->next;
 	}
-	if (deep_copy == NULL){
+if (deep_copy == NULL){
 		token newname = target->data.user.user;
 		newname.string = pool_request(mem, TOKEN_MAX);
 		snprintf(newname.string, TOKEN_MAX, ":STRUCT_MONO_%u", tree->lifted_lambdas);
@@ -2776,6 +2776,9 @@ monomorphize(scope* const roll, ast* const tree, pool* const mem, expression_ast
 	new_morph->next=NULL;
 	new_morph->assoc=type_ast_map_init(mem);
 	clash_types(roll, tree, mem, &new_morph->assoc, full_type, expr->data.block.expr_c-index, &expr->data.block.expr_v[index], err);
+	if (*err != 0){
+		return;
+	}
 	mono_entry* morph = mono_entry_map_access(&tree->monomorphs, leftmost->data.binding.name.string);
 	function_ast* deep_copy = NULL;
 	while (morph != NULL){
@@ -2793,7 +2796,7 @@ monomorphize(scope* const roll, ast* const tree, pool* const mem, expression_ast
 		token newname = bound_function->name;
 		newname.string = pool_request(mem, TOKEN_MAX);
 		snprintf(newname.string, TOKEN_MAX, ":MONO_%u", tree->lifted_lambdas);
-tree->lifted_lambdas += 1;
+		tree->lifted_lambdas += 1;
 		function_ast new_deep_copy;
 		deep_type_replace(&new_morph->assoc, mem, &new_deep_copy, bound_function, newname, err);
 		if (*err != 0){
@@ -2852,15 +2855,93 @@ clash_types(scope* const roll, ast* const tree, pool* const mem, type_ast_map* c
 		}
 		type_ast* left = full->data.function.left;
 		full = full->data.function.right;
-		if (clash_find_diff(assoc, full_type, left, &arg_type) == 0){
+		printf("clash\n");
+		if (clash_find_diff(roll, tree, mem, assoc, full_type, left, &arg_type, err) == 0){
 			snprintf(err, ERROR_BUFFER, " [!] Cannot apply type to parametric type\n");
+			return;
+		}
+	}
+	clash_validate_return_type(roll, tree, mem, assoc, full, err);
+}
+
+void
+clash_validate_return_type(scope* const roll, ast* const tree, pool* const mem, type_ast_map* const assoc, type_ast* const ret, char* err){
+	switch (ret->tag){
+	case FUNCTION_TYPE:
+		clash_validate_return_type(roll, tree, mem, assoc, ret->data.function.left, err);
+		if (*err != 0){
+			return;
+		}
+		clash_validate_return_type(roll, tree, mem, assoc, ret->data.function.right, err);
+		return;
+	case PROCEDURE_TYPE:
+	case POINTER_TYPE:
+		clash_validate_return_type(roll, tree, mem, assoc, ret->data.pointer, err);
+		return;
+	case BUFFER_TYPE:
+		clash_validate_return_type(roll, tree, mem, assoc, ret->data.buffer.base, err);
+		return;
+	case USER_TYPE:
+		type_ast* access = type_ast_map_access(assoc, ret->data.user.user.string);
+		if (access != NULL){
+			*ret = *access;
+			return;
+		}
+		for (uint8_t i = 0;i<ret->data.user.param_c;++i){
+			clash_validate_return_type(roll, tree, mem, assoc, &ret->data.user.param_v[i], err);
+			if (*err != 0){
+				return;
+			}
+		}
+		roll_type(roll, tree, mem, ret, err);
+		if (*err != 0){
+			return;
+		}
+		type_ast resolved = resolve_type_or_alias(tree, *ret, err);
+		if (*err != 0){
+			return;
+		}
+		mono_entry_structure* morph = mono_entry_structure_map_access(&tree->monomorph_structures, ret->data.user.user.string);
+		while (morph != NULL){
+			if (type_cmp(&resolved, morph->t) == 0){
+				ret->data.user.user = morph->name;
+				ret->data.user.param_c = 0;
+				ret->data.user.param_v = NULL;
+				return;
+			}
+			morph = morph->next;
+		}
+		return;
+	case STRUCT_TYPE:
+		clash_validate_return_struct(roll, tree, mem, assoc, ret->data.structure, err);
+		return;
+	case PRIMITIVE_TYPE:
+	case NONE_TYPE:
+	case INTERNAL_ANY_TYPE:
+		return;
+	default:
+		snprintf(err, ERROR_BUFFER, " [!] Unknown parametric return type\n");
+	}
+}
+
+void
+clash_validate_return_struct(scope* const roll, ast* const tree, pool* const mem, type_ast_map* const assoc, structure_ast* const ret, char* err){
+	for (uint32_t i = 0;i<ret->binding_c;++i){
+		clash_validate_return_type(roll, tree, mem, assoc, &ret->binding_v[i].type, err);
+		if (*err != 0){
+			return;
+		}
+	}
+	for (uint32_t i = 0;i<ret->union_c;++i){
+		clash_validate_return_struct(roll, tree, mem, assoc, &ret->union_v[i], err);
+		if (*err != 0){
 			return;
 		}
 	}
 }
 
 uint8_t
-clash_find_diff(type_ast_map* const assoc, type_ast* const outer, type_ast* const left_type, type_ast* const arg_type){
+clash_find_diff(scope* const roll, ast* const tree, pool* const mem, type_ast_map* const assoc, type_ast* const outer, type_ast* const left_type, type_ast* const arg_type, char* err){
 	if (left_type->tag != arg_type->tag){
 		if (left_type->tag == USER_TYPE){
 			type_ast* access = type_ast_map_access(assoc, left_type->data.user.user.string);
@@ -2888,16 +2969,16 @@ clash_find_diff(type_ast_map* const assoc, type_ast* const outer, type_ast* cons
 	}
 	switch (left_type->tag){
 	case FUNCTION_TYPE:
-		return clash_find_diff(assoc, outer, left_type->data.function.left, arg_type->data.function.left)
-			 * clash_find_diff(assoc, outer, left_type->data.function.right, arg_type->data.function.right);
-	case PROCEDURE_TYPE:
+		return clash_find_diff(roll, tree, mem, assoc, outer, left_type->data.function.left, arg_type->data.function.left, err)
+			 * clash_find_diff(roll, tree, mem, assoc, outer, left_type->data.function.right, arg_type->data.function.right, err);
 	case PRIMITIVE_TYPE:
 		return left_type->data.primitive == arg_type->data.primitive;
+	case PROCEDURE_TYPE:
 	case POINTER_TYPE:
-		return clash_find_diff(assoc, outer, left_type->data.pointer, arg_type->data.pointer);
+		return clash_find_diff(roll, tree, mem, assoc, outer, left_type->data.pointer, arg_type->data.pointer, err);
 	case BUFFER_TYPE:
 		return (left_type->data.buffer.count == arg_type->data.buffer.count)
-			&& clash_find_diff(assoc, outer, left_type->data.buffer.base, arg_type->data.buffer.base);
+			&& clash_find_diff(roll, tree, mem, assoc, outer, left_type->data.buffer.base, arg_type->data.buffer.base, err);
 	case USER_TYPE:
 		if (strncmp(left_type->data.user.user.string, arg_type->data.user.user.string, TOKEN_MAX) != 0){
 			type_ast* access = type_ast_map_access(assoc, left_type->data.user.user.string);
@@ -2910,8 +2991,21 @@ clash_find_diff(type_ast_map* const assoc, type_ast* const outer, type_ast* cons
 			for (uint8_t i = 0;i<outer->param_c;++i){
 				if (strncmp(left_type->data.user.user.string, outer->param_v[i].string, TOKEN_MAX) == 0){
 					type_ast_map_insert(assoc, left_type->data.user.user.string, arg_type);
+					*left_type = *arg_type;
 					return 1;
 				}
+			}
+			type_ast resolved = resolve_type_or_alias(tree, *arg_type, err);
+			if (*err != 0){
+				return 0;
+			}
+			type_ast left_resolved = resolve_type_or_alias(tree, *left_type, err);
+			if (*err != 0){
+				return 0;
+			}
+			if (clash_find_diff(roll, tree, mem, assoc, outer, &left_resolved, &resolved, err) == 1){
+				*left_type = *arg_type;
+				return 1;
 			}
 			return 0;
 		}
@@ -2919,13 +3013,17 @@ clash_find_diff(type_ast_map* const assoc, type_ast* const outer, type_ast* cons
 			return 0;
 		}
 		for (uint8_t i = 0;i<left_type->data.user.param_c;++i){
-			if (clash_find_diff(assoc, outer, &left_type->data.user.param_v[i], &arg_type->data.user.param_v[i]) == 0){
+			if (clash_find_diff(roll, tree, mem, assoc, outer, &left_type->data.user.param_v[i], &arg_type->data.user.param_v[i], err) == 0){
 				return 0;
 			}
 		}
-		return 1;	
+		roll_type(roll, tree, mem, left_type, err);
+		if (*err != 0){
+			return 0;
+		}
+		return 1;
 	case STRUCT_TYPE:
-		return clash_find_diff_structure(assoc, outer, left_type->data.structure, arg_type->data.structure);
+		return clash_find_diff_structure(roll, tree, mem, assoc, outer, left_type->data.structure, arg_type->data.structure, err);
 	case NONE_TYPE:
 	case INTERNAL_ANY_TYPE:
 		return 1;
@@ -2935,18 +3033,18 @@ clash_find_diff(type_ast_map* const assoc, type_ast* const outer, type_ast* cons
 }
 
 uint8_t
-clash_find_diff_structure(type_ast_map* const assoc, type_ast* const outer, structure_ast* const left_struct, structure_ast* const arg_struct){
+clash_find_diff_structure(scope* const roll, ast* const tree, pool* const mem, type_ast_map* const assoc, type_ast* const outer, structure_ast* const left_struct, structure_ast* const arg_struct, char* err){
 	if ((left_struct->binding_c != arg_struct->binding_c)
 	 || (left_struct->union_c != arg_struct->union_c)){
 		return 0;
 	}
 	for (uint32_t i = 0;i<left_struct->binding_c;++i){
-		if (clash_find_diff(assoc, outer, &left_struct->binding_v[i].type, &arg_struct->binding_v[i].type) == 0){
+		if (clash_find_diff(roll, tree, mem, assoc, outer, &left_struct->binding_v[i].type, &arg_struct->binding_v[i].type, err) == 0){
 			return 0;
 		}
 	}
 	for (uint32_t i = 0;i<left_struct->union_c;++i){
-		if (clash_find_diff_structure(assoc, outer, &left_struct->union_v[i], &arg_struct->union_v[i]) == 0){
+		if (clash_find_diff_structure(roll, tree, mem, assoc, outer, &left_struct->union_v[i], &arg_struct->union_v[i], err) == 0){
 			return 0;
 		}
 	}
@@ -2970,6 +3068,7 @@ deep_type_replace_type(type_ast_map* const assoc, pool* const mem, type_ast* con
 	copy->tag = type->tag;
 	copy->param_c = type->param_c;
 	copy->param_v = type->param_v;
+	copy->mut = type->mut;
 	switch (type->tag){
 	case FUNCTION_TYPE:
 		copy->data.function.left = pool_request(mem, sizeof(type_ast));
