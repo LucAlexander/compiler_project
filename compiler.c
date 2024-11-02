@@ -1807,7 +1807,7 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
 
  	1 procedures can just return, thats all, no other anything, just normal functions otherwise
 		procedures dont capture at all, can be invoked with function arguments
-	2 parametric types/ buffers/ pointers
+	2 first pass
 		1 divide applications into partials and full applications for function calls, create copies of functions and types that are parametric applied, pause to follow through
 		2 parametric closures
 	3 Good error system
@@ -1818,7 +1818,7 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
 	6 code generation
 		1 C proof of concept understanding
 		2 maybe a native x86 or arm or risc-V
-		3 custom vm for game OS (hla doc)
+		3 custom vm for game OS (hla doc) -> translates to other native platforms
 	7 memory optimizations
 		1 separate buffers for different nodes
 		2 node size starts small and can resize, old can be reused for next node
@@ -2153,6 +2153,12 @@ roll_expression(
 			tree->lifted_lambdas += 1;
 			tree->func_v[tree->func_c] = lifted_closure;
 			function_ast_map_insert(&tree->functions, tree->func_v[tree->func_c].name.string, &tree->func_v[tree->func_c]);
+			value_binding* prev_pointer = &roll->binding_stack[roll->binding_count-1];
+			prev_pointer->ref = pool_request(mem, sizeof(value_binding));
+			prev_pointer = prev_pointer->ref;
+			prev_pointer->name=tree->func_v[tree->func_c].name;
+			prev_pointer->type=tree->func_v[tree->func_c].type;
+			prev_pointer->ref=NULL;
 			tree->func_c += 1;
 			binding_ast new_binding = {
 				.type=lifted_closure.type,
@@ -2767,8 +2773,16 @@ monomorphize(scope* const roll, ast* const tree, pool* const mem, expression_ast
 	}
 	function_ast* bound_function = function_ast_map_access(&tree->functions, leftmost->data.binding.name.string);
 	if (bound_function == NULL){
-		snprintf(err, ERROR_BUFFER, " [!] Tried to monomorph function binding '%s' which does not exist\n", leftmost->data.binding.name.string);
-		return;
+		token* referenced_closure = scope_contains_reference(roll, &leftmost->data.binding.name);
+		if (referenced_closure == NULL){
+			snprintf(err, ERROR_BUFFER, " [!] Tried to monomorph closure '%s' which does not exist\n", leftmost->data.binding.name.string);
+			return;
+		}
+		bound_function = function_ast_map_access(&tree->functions, referenced_closure->string);
+		if (bound_function == NULL){
+			snprintf(err, ERROR_BUFFER, " [!] Tried to monomorph function binding '%s' which does not exist\n", leftmost->data.binding.name.string);
+			return;
+		}
 	}
 	mono_entry* new_morph = pool_request(mem, sizeof(mono_entry));
 	new_morph->f=bound_function;
@@ -2970,7 +2984,7 @@ clash_find_diff(scope* const roll, ast* const tree, pool* const mem, type_ast_ma
 		return clash_find_diff(roll, tree, mem, assoc, outer, left_type->data.function.left, arg_type->data.function.left, err)
 			 * clash_find_diff(roll, tree, mem, assoc, outer, left_type->data.function.right, arg_type->data.function.right, err);
 	case PRIMITIVE_TYPE:
-		return left_type->data.primitive == arg_type->data.primitive;
+		return !type_coerces(left_type->data.primitive, arg_type->data.primitive);
 	case PROCEDURE_TYPE:
 	case POINTER_TYPE:
 		return clash_find_diff(roll, tree, mem, assoc, outer, left_type->data.pointer, arg_type->data.pointer, err);
@@ -3857,6 +3871,20 @@ struct_cmp(structure_ast* const a, structure_ast* const b){
 	return 0;
 }
 
+token*
+scope_contains_reference(scope* const roll, token* bound){
+	for (uint16_t i = roll->frame_stack[roll->frame_count-1];roll->binding_count;++i){
+		if (strncmp(roll->binding_stack[i].name.string, bound->string, TOKEN_MAX)==0){
+			
+			if (roll->binding_stack[i].ref != NULL){
+				return &roll->binding_stack[i].ref->name;
+			}
+			return NULL;
+		}
+	}
+	return NULL;
+}
+
 type_ast*
 scope_contains(scope* const roll, value_binding* const binding, uint8_t* needs_capturing){
 	if (needs_capturing != NULL){
@@ -3874,10 +3902,6 @@ scope_contains(scope* const roll, value_binding* const binding, uint8_t* needs_c
 	}
 	for (uint16_t i = roll->frame_stack[roll->frame_count-1];i<roll->binding_count;++i){
 		if (strncmp(roll->binding_stack[i].name.string, binding->name.string, TOKEN_MAX) == 0){
-			if ((needs_capturing != NULL)
-			 && (i < roll->captures->binding_count_point)){
-				*needs_capturing = 1;
-			}
 			return &roll->binding_stack[i].type;
 		}
 	}

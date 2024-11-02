@@ -508,6 +508,7 @@ void roll_data_layout(ast* const tree, structure_ast* const target, token name, 
 void roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err);
 void roll_struct_type(scope* const roll, ast* const tree, pool* const mem, structure_ast* const target, char* err);
 type_ast roll_expression(scope* const roll, ast* const tree, pool* const mem, expression_ast* const expr, type_ast expected_type, uint32_t argc, expression_ast* const argv, uint8_t prevent_lift, char* err);
+token* scope_contains_reference(scope* const roll, token* bound);
 type_ast* scope_contains(scope* const roll, value_binding* const binding, uint8_t* needs_capture);
 void handle_procedural_statement(scope* const roll, ast* const tree, pool* const mem, expression_ast* const line, type_ast expected_Type, char* const err);
 type_ast roll_statement_expression(scope* const roll, ast* const tree, pool* const mem, statement_ast* const statement, type_ast expected_type, uint8_t as_expression, char* err);
