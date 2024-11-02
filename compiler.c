@@ -1808,12 +1808,10 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
  	1 procedures can just return, thats all, no other anything, just normal functions otherwise
 		procedures dont capture at all, can be invoked with function arguments
 	2 parametric types/ buffers/ pointers
-		1 parametric type rolls have scope leak
-		2 divide applications into partials and full applications for function calls, create copies of functions and types that are parametric applied, pause to follow through
-		3 need a way to find out if we have an applied version ofthe function or type already so we dont "over-morphize"
-		4 parametric closures
+		1 divide applications into partials and full applications for function calls, create copies of functions and types that are parametric applied, pause to follow through
+		2 parametric closures
 	3 Good error system
-	4 matches on enumerated struct union, maybe with @ / enum access with tag?
+	4 matches on enumerated struct union, maybe with @ / enum access with tag? - switch
 	5 second pass
 		1 require main
 		2 determine what code will be used and what code will not be used
@@ -2585,6 +2583,7 @@ roll_expression(
 		push_frame(roll);
 		type_ast outer_copy = expected_type;
 		if (expected_type.tag != NONE_TYPE){
+			roll_type(roll, tree, mem, &expected_type, err);
 			if (prevent_lift == 0){
 				push_capture_frame(roll, mem);
 			}
