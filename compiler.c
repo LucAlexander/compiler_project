@@ -1808,9 +1808,10 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
  	1 procedures can just return, thats all, no other anything, just normal functions otherwise
 		procedures dont capture at all, can be invoked with function arguments
 	2 parametric types/ buffers/ pointers
+		1 parametric type rolls have scope leak
 		2 divide applications into partials and full applications for function calls, create copies of functions and types that are parametric applied, pause to follow through
 		3 need a way to find out if we have an applied version ofthe function or type already so we dont "over-morphize"
-		4 monomorphization of parametric types/functions that take them
+		4 parametric closures
 	3 Good error system
 	4 matches on enumerated struct union, maybe with @ / enum access with tag?
 	5 second pass
@@ -1907,7 +1908,6 @@ roll_type(scope* const roll, ast* const tree, pool* const mem, type_ast* const t
 
 void
 monomorphize_structure(scope* const roll, ast* const tree, pool* const mem, type_ast* const target, char* err){
-	printf("mm structure\n");
 	type_ast* inner_resolve = NULL;
 	new_type_ast* is_type = new_type_ast_map_access(&tree->types, target->data.user.user.string);
 	if (is_type == NULL){
@@ -1943,7 +1943,7 @@ monomorphize_structure(scope* const roll, ast* const tree, pool* const mem, type
 		}
 		morph = morph->next;
 	}
-if (deep_copy == NULL){
+	if (deep_copy == NULL){
 		token newname = target->data.user.user;
 		newname.string = pool_request(mem, TOKEN_MAX);
 		snprintf(newname.string, TOKEN_MAX, ":STRUCT_MONO_%u", tree->lifted_lambdas);
@@ -2117,7 +2117,7 @@ roll_expression(
 		};
 		uint8_t needs_capture = 0;
 		if (scope_contains(roll, &scope_item, &needs_capture) != NULL){
-			snprintf(err, ERROR_BUFFER, " [!] Binding with name '%s' already in scope\n", scope_item.name.string);
+			snprintf(err, ERROR_BUFFER, " [!] Closure binding with name '%s' already in scope\n", scope_item.name.string);
 			return expected_type;
 		}
 		if (needs_capture == 1){
@@ -2602,7 +2602,7 @@ roll_expression(
 				};
 				if (scope_contains(roll, &scope_item, NULL) != NULL){
 					pop_frame(roll);
-					snprintf(err, ERROR_BUFFER, " [!] Binding with name '%s' already in scope\n", scope_item.name.string);
+					snprintf(err, ERROR_BUFFER, " [!] Lambda binding with name '%s' already in scope\n", scope_item.name.string);
 					return expected_type;
 				}
 				push_binding(roll, scope_item);
@@ -2651,7 +2651,7 @@ roll_expression(
 				.ref=NULL
 			};
 			if (scope_contains(roll, &scope_item, NULL) != NULL){
-				snprintf(err, ERROR_BUFFER, " [!] Binding with name '%s' already in scope\n", scope_item.name.string);
+				snprintf(err, ERROR_BUFFER, " [!] Lambda arg binding with name '%s' already in scope\n", scope_item.name.string);
 				pop_frame(roll);
 				return expected_type;
 			}
@@ -2855,7 +2855,6 @@ clash_types(scope* const roll, ast* const tree, pool* const mem, type_ast_map* c
 		}
 		type_ast* left = full->data.function.left;
 		full = full->data.function.right;
-		printf("clash\n");
 		if (clash_find_diff(roll, tree, mem, assoc, full_type, left, &arg_type, err) == 0){
 			snprintf(err, ERROR_BUFFER, " [!] Cannot apply type to parametric type\n");
 			return;
@@ -3861,15 +3860,31 @@ struct_cmp(structure_ast* const a, structure_ast* const b){
 
 type_ast*
 scope_contains(scope* const roll, value_binding* const binding, uint8_t* needs_capturing){
-	for (uint16_t i = 0;i<roll->binding_count;++i){
-		uint16_t index = roll->binding_count - (i+1);
-		if (strncmp(roll->binding_stack[index].name.string, binding->name.string, TOKEN_MAX) == 0){
+	if (needs_capturing != NULL){
+		for (uint16_t i = 0;i<roll->binding_count;++i){
+			uint16_t index = roll->binding_count - (i+1);
+			if (strncmp(roll->binding_stack[index].name.string, binding->name.string, TOKEN_MAX) == 0){
+				if ((index < roll->captures->binding_count_point)
+				 && (index >= roll->builtin_stack_frame)){
+					*needs_capturing = 1;
+				}
+				return &roll->binding_stack[index].type;
+			}
+		}
+		return NULL;
+	}
+	for (uint16_t i = roll->frame_stack[roll->frame_count-1];i<roll->binding_count;++i){
+		if (strncmp(roll->binding_stack[i].name.string, binding->name.string, TOKEN_MAX) == 0){
 			if ((needs_capturing != NULL)
-			 && (index < roll->captures->binding_count_point)
-			 && (index >= roll->builtin_stack_frame)){
+			 && (i < roll->captures->binding_count_point)){
 				*needs_capturing = 1;
 			}
-			return &roll->binding_stack[index].type;
+			return &roll->binding_stack[i].type;
+		}
+	}
+	for (uint16_t i = 0;i<roll->builtin_stack_frame;++i){
+		if (strncmp(roll->binding_stack[i].name.string, binding->name.string, TOKEN_MAX) == 0){
+			return &roll->binding_stack[i].type;
 		}
 	}
 	return NULL;
