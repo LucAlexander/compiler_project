@@ -766,7 +766,7 @@ parse_function(lexer* const lex, pool* const mem, char* err, uint8_t allowed_enc
 	}
 	lex->index += 1;
 	expression_ast expr = parse_application_expression(lex, mem, err, TOKEN_SEMI, 0, -1);
-	if (expr.tag == APPLICATION_EXPRESSION && expr.data.block.expr_c == 1){
+	if ((expr.tag == APPLICATION_EXPRESSION||expr.tag == PARTIAL_EXPRESSION) && expr.data.block.expr_c == 1){
 		expr = expr.data.block.expr_v[0];
 	}
 	return (function_ast){
@@ -907,7 +907,7 @@ try_function(lexer* const lex, pool* const mem, char* err){
 
 expression_ast
 unwrap_single_application(expression_ast single){
-	while (single.tag == APPLICATION_EXPRESSION && single.data.block.expr_c == 1){
+	while ((single.tag == APPLICATION_EXPRESSION||single.tag==PARTIAL_EXPRESSION) && single.data.block.expr_c == 1){
 		single = single.data.block.expr_v[0];
 	}
 	return single;
@@ -1807,9 +1807,7 @@ roll_data_layout(ast* const tree, structure_ast* const target, token name, struc
 
  	1 procedures can just return, thats all, no other anything, just normal functions otherwise
 		procedures dont capture at all, can be invoked with function arguments
-	2 first pass
-		1 divide applications into partials and full applications for function calls, create copies of functions and types that are parametric applied, pause to follow through
-		2 parametric closures
+	2 closure/partial function pointers
 	3 Good error system
 	4 matches on enumerated struct union, maybe with @ / enum access with tag? - switch
 	5 second pass
@@ -2194,6 +2192,7 @@ roll_expression(
 		pop_capture_frame(roll, &captured_binds);
 		return expected_type;
 
+	case PARTIAL_EXPRESSION:
 	case APPLICATION_EXPRESSION:
 		if (expr->data.block.type.tag != NONE_TYPE){
 			return expr->data.block.type;
@@ -2261,6 +2260,9 @@ roll_expression(
 				snprintf(err, ERROR_BUFFER, " [!] Application expression returned unexpected type\n");
 				return full_type;
 			}
+		}
+		if (full_type.tag == FUNCTION_TYPE){
+			expr->tag = PARTIAL_EXPRESSION;
 		}
 		expr->data.block.type = full_type;
 		return full_type;
@@ -3257,6 +3259,7 @@ deep_type_replace_expression(type_ast_map* const assoc, pool* const mem, express
 	copy->tag = expr->tag;
 	switch (expr->tag){
 	case BLOCK_EXPRESSION:
+	case PARTIAL_EXPRESSION:
 	case APPLICATION_EXPRESSION:
 		deep_type_replace_type(assoc, mem, &copy->data.block.type, &expr->data.block.type, err);
 		if (*err != 0){
@@ -4216,7 +4219,7 @@ roll_literal_expression(
 		uint32_t data_member = 0;
 		for (uint32_t index = 0;index<lit->data.array.member_c;++index){
 			expression_ast* term = &lit->data.array.member_v[index];
-			if ((term->tag == APPLICATION_EXPRESSION)
+			if ((term->tag == APPLICATION_EXPRESSION || term->tag == PARTIAL_EXPRESSION)
 			 && (term->data.block.expr_c == 1)
 			 && (term->data.block.expr_v[0].tag == BINDING_EXPRESSION)){
 				uint8_t skip = 0;
@@ -5161,6 +5164,8 @@ show_expression(const expression_ast* const expr, uint8_t indent){
 		printf("> ");
 		show_function(expr->data.closure.func);
 		break;
+	case PARTIAL_EXPRESSION:
+		printf("\033[1;32mPARTIAL\033[0m ");
 	case APPLICATION_EXPRESSION:
 		show_type(&expr->data.block.type);
 		printf("( ");
