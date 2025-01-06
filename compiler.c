@@ -2203,7 +2203,10 @@ roll_expression(
 				expr->data.block.type = only;
 			}
 			if (only.param_c > 0){
-				//TODO descend with expected_type as arg type expectation
+				monomorphize(roll, tree, mem, expr, &expr->data.block.expr_v[0], &expected_type, 0, err);
+				if (*err != 0){
+					return expected_type;
+				}
 				snprintf(err, ERROR_BUFFER, " [!] Tried to monomorphize with no arguments to apply, no types to deduce with\n");
 			}
 			return only;
@@ -5274,7 +5277,7 @@ show_function(const function_ast* const func){
 
 int
 main(int argc, char** argv){
-	compile_file("correct.ka");
+	compile_file("test_mono.ka");
 	return 0;
 	if (argc < 2){
 		fprintf(stderr, "No arguments provided, use -h or -help for a list of options\n\n");
